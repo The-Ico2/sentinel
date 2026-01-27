@@ -3,6 +3,7 @@
 use serde_json::Value;
 use crate::ipc::sysdata::display::MonitorManager;
 use crate::ipc::registry::global_registry;
+use crate::ipc::sysdata::time as time_module;
 
 pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
     let reg = global_registry().read().unwrap();
@@ -30,7 +31,7 @@ pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
         "get_ram" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
         "get_storage" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
         "get_network" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
-
+        "get_time"=> Ok(time_module::get_time_json()),
         _ => Err(format!("Unknown sysdata command: {}", cmd)),
     }
 }

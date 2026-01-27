@@ -58,15 +58,20 @@ pub fn build_systray(
         }
     }
 
-    // Global actions
-    info!("Adding global tray menu actions");
+    // Global actions: add them as top-level items so they're immediately visible
+    info!("Adding global tray menu actions (top-level)");
+    // Separator between addons and global actions
+    menu.append(&PredefinedMenuItem::separator()).ok();
     let rescan = MenuItem::new("Rescan Addons", true, None);
     let exit = MenuItem::new("Exit", true, None);
     let rescan_id = rescan.id().clone();
     let exit_id = exit.id().clone();
-    ids.insert(rescan_id, MenuAction::Rescan);
-    ids.insert(exit_id, MenuAction::Exit);
+    ids.insert(rescan_id.clone(), MenuAction::Rescan);
+    ids.insert(exit_id.clone(), MenuAction::Exit);
+    menu.append(&rescan).ok();
+    menu.append(&exit).ok();
 
+    // Log top-level menu structure for debugging
     info!("System tray menu build complete with {} addons", addons.len());
     (menu, ids)
 }

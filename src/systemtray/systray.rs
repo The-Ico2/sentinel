@@ -47,12 +47,12 @@ pub enum UserEvent {
 
 fn ensure_user_config_dirs() {
     if let Ok(home) = std::env::var("USERPROFILE") {
-        let root = Path::new(&home).join(".config").join("Sentinel");
+        let root = Path::new(&home).join(".Sentinel");
         for p in [
-            root.join("StatusBar"),
-            root.join("Widgets"),
-            root.join("Wallpapers"),
-            root.join("Themes"),
+            root.join("Assets/StatusBar"),
+            root.join("Assets/Widgets"),
+            root.join("Assets/Wallpapers"),
+            root.join("Assets/Themes"),
         ] {
             if let Err(e) = std::fs::create_dir_all(&p) {
                 warn!("Failed to create config dir {}: {}", p.display(), e);
@@ -142,13 +142,6 @@ pub fn spawn_tray() {
                         .expect("Failed to build tray icon"),
                 );
                 ensure_user_config_dirs();
-
-                #[cfg(target_os = "macos")]
-                unsafe {
-                    use objc2_core_foundation::{CFRunLoopGetMain, CFRunLoopWakeUp};
-                    let rl = CFRunLoopGetMain().unwrap();
-                    CFRunLoopWakeUp(&rl);
-                }
             }
 
             Event::UserEvent(UserEvent::TrayIconEvent(event)) => match event {

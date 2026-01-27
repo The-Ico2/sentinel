@@ -7,3 +7,4 @@ pub mod storage;
 pub mod temp;
 pub mod network;
 pub mod display;
+pub mod time;
