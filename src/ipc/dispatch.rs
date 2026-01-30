@@ -4,18 +4,20 @@ use crate::{info, warn};
 
 mod registryd;
 mod sysdatad;
+mod addond;
 
 pub fn dispatch(
     _windows: &WindowsCManager, // currently unused, but kept for future commands
     ns: &str,
     cmd: &str,
-    _args: Option<Value>,
+    args: Option<Value>,
 ) -> Result<Value, String> {
     info!("[IPC] Dispatch request -> namespace: '{}', command: '{}'", ns, cmd);
 
     match ns {
         "registry" => registryd::dispatch_registry(cmd),
         "sysdata" => sysdatad::dispatch_sysdata(cmd),
+        "addon" => addond::dispatch_addon(cmd, args),
         _ => {
             warn!("[IPC] Unknown namespace requested: '{}'", ns);
             Err(format!("Unknown namespace: {}", ns))

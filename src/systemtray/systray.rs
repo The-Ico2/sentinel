@@ -15,17 +15,15 @@ use tray_icon::{
     menu::MenuEvent,
     TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
+use serde_json::json;
 
 use crate::{
     Addon,
     systemtray::{
         build::build_systray,
-        addon::{
-            start::start_addon,
-            stop::stop_addon,
-        },
         discover::discover_addons,
     },
+    ipc::request::send_ipc_request,
 };
 use crate::{info, warn, error};
 
@@ -154,39 +152,39 @@ pub fn spawn_tray() {
                 if let Some(action) = id_map.get(&event.id).cloned() {
                     match action {
                         MenuAction::Start(name) => {
-                            if let Some(ad) = addons.iter().find(|a| a.name == name) {
-                                if is_addon_running(ad) {
-                                    info!("[addons] '{}' already running", name);
-                                } else {
-                                    match start_addon(ad) {
-                                        Ok(child) => {
-                                            info!("[addons] Started '{}'", name);
-                                            children.insert(name, child);
-                                        }
-                                        Err(e) => error!("[addons] Failed to start '{}': {}", name, e),
-                                    }
-                                }
+                            let req = crate::ipc::request::IpcRequest {
+                                ns: "addon".to_string(),
+                                cmd: "start".to_string(),
+                                args: Some(json!({"addon_name": name.clone()})),
+                            };
+                            match send_ipc_request(req) {
+                                Ok(resp) if resp.ok => info!("[addons] Started '{}' via IPC", name),
+                                Ok(resp) => error!("[addons] Failed to start '{}': {}", name, resp.error.unwrap_or_default()),
+                                Err(e) => error!("[addons] IPC error starting '{}': {}", name, e),
                             }
                         }
                         MenuAction::Stop(name) => {
-                            if let Some(ad) = addons.iter().find(|a| a.name == name) {
-                                if stop_addon(ad, &mut children) {
-                                    info!("[addons] Stopped '{}'", name);
-                                } else {
-                                    info!("[addons] '{}' was not running", name);
-                                }
+                            let req = crate::ipc::request::IpcRequest {
+                                ns: "addon".to_string(),
+                                cmd: "stop".to_string(),
+                                args: Some(json!({"addon_name": name.clone()})),
+                            };
+                            match send_ipc_request(req) {
+                                Ok(resp) if resp.ok => info!("[addons] Stopped '{}' via IPC", name),
+                                Ok(resp) => error!("[addons] Failed to stop '{}': {}", name, resp.error.unwrap_or_default()),
+                                Err(e) => error!("[addons] IPC error stopping '{}': {}", name, e),
                             }
                         }
                         MenuAction::Reload(name) => {
-                            if let Some(ad) = addons.iter().find(|a| a.name == name) {
-                                let _ = stop_addon(ad, &mut children);
-                                match start_addon(ad) {
-                                    Ok(child) => {
-                                        info!("[addons] Reloaded '{}'", name);
-                                        children.insert(name, child);
-                                    }
-                                    Err(e) => error!("[addons] Failed to reload '{}': {}", name, e),
-                                }
+                            let req = crate::ipc::request::IpcRequest {
+                                ns: "addon".to_string(),
+                                cmd: "reload".to_string(),
+                                args: Some(json!({"addon_name": name.clone()})),
+                            };
+                            match send_ipc_request(req) {
+                                Ok(resp) if resp.ok => info!("[addons] Reloaded '{}' via IPC", name),
+                                Ok(resp) => error!("[addons] Failed to reload '{}': {}", name, resp.error.unwrap_or_default()),
+                                Err(e) => error!("[addons] IPC error reloading '{}': {}", name, e),
                             }
                         }
                         MenuAction::OpenEditor(name) => {

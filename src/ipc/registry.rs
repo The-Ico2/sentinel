@@ -17,13 +17,6 @@ use crate::{
 
 static LAST_REGISTRY_WRITE: OnceLock<RwLock<Instant>> = OnceLock::new();
 
-// #[derive(Debug, Deserialize)]
-// pub struct AddonManifest {
-//     pub id: String,
-//     pub name: String,
-//     pub version: String,
-// }
-
 /// Single registry entry (addon, widget, etc)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
@@ -42,20 +35,6 @@ pub struct Registry {
     pub assets: Vec<RegistryEntry>,
     pub sysdata: Vec<RegistryEntry>,
     pub appdata: Vec<RegistryEntry>,
-}
-
-impl Registry {
-    // pub fn all_entries(&self) -> Vec<RegistryEntry> {
-    //     self.addons.iter().chain(self.assets.iter()).cloned().collect()
-    // }
-
-    // pub fn all_assets(&self) -> Vec<RegistryEntry> {
-    //     self.assets.clone()
-    // }
-
-    // pub fn all_addons(&self) -> Vec<RegistryEntry> {
-    //     self.addons.clone()
-    // }
 }
 
 static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();

@@ -70,9 +70,6 @@ impl MonitorManager {
                 hasher.update(rc.bottom.to_le_bytes());
                 let id = format!("{:x}", hasher.finalize());
 
-                info!("[Display] Found monitor '{}': primary={}, {}x{} @ ({},{}) scale={}", 
-                    device_name, primary, rc.right - rc.left, rc.bottom - rc.top, rc.left, rc.top, scale);
-
                 list.push(MonitorInfo {
                     id,
                     primary,

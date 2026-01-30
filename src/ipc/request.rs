@@ -83,21 +83,21 @@ pub fn send_ipc_request(request: IpcRequest) -> Result<IpcResponse, String> {
         let mut read = 0u32;
         if ReadFile(handle, Some(&mut buffer), Some(&mut read), None).is_err() {
             let _ = CloseHandle(handle);
-            error!("IPC read failed");
-            return Err("IPC read failed".into());
+            error!("[IPC] [Response] read failed");
+            return Err("[IPC] [Response] read failed".into());
         }
-        info!("Received {} bytes from IPC server", read);
+        info!("[IPC] [Response]: Received {} bytes from IPC server", read);
 
         let _ = CloseHandle(handle);
 
         match from_slice::<IpcResponse>(&buffer[..read as usize]) {
             Ok(resp) => {
-                info!("IPC response: ok={}, error={:?}", resp.ok, resp.error);
+                info!("[IPC] [Response]: ok={}, error={:?}", resp.ok, resp.error);
                 Ok(resp)
             },
             Err(e) => {
-                error!("Failed to decode IPC response: {e}");
-                Err(format!("IPC decode failed: {e}"))
+                error!("[IPC] [Response] Failed to decode IPC response: {e}");
+                Err(format!("[IPC] [Response] decode failed: {e}"))
             }
         }
     }
