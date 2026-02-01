@@ -12,7 +12,6 @@ use windows::{
     },
 };
 
-use crate::{info};
 
 #[derive(Serialize, Debug, Clone)]
 pub struct MonitorInfo {

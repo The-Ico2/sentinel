@@ -3,22 +3,21 @@ pub mod taskbar;
 pub mod wallpaper;
 pub mod theme;
 pub mod transparency;
-pub mod registry;
 
 pub struct WindowsCManager {
-    pub taskbar: taskbar::Taskbar,
-    pub wallpaper: wallpaper::Wallpaper,
-    pub theme: theme::Theme,
-    pub transparency: transparency::Transparency,
+    pub _taskbar: taskbar::Taskbar,
+    pub _wallpaper: wallpaper::Wallpaper,
+    pub _theme: theme::Theme,
+    pub _transparency: transparency::Transparency,
 }
 
 impl WindowsCManager {
     pub fn new() -> Self {
         Self {
-            taskbar: taskbar::Taskbar::new(),
-            wallpaper: wallpaper::Wallpaper::new(),
-            theme: theme::Theme::new(),
-            transparency: transparency::Transparency::new(),
+            _taskbar: taskbar::Taskbar::new(),
+            _wallpaper: wallpaper::Wallpaper::new(),
+            _theme: theme::Theme::new(),
+            _transparency: transparency::Transparency::new(),
         }
     }
 }

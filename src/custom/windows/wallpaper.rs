@@ -13,7 +13,7 @@ impl Wallpaper {
         Self
     }
 
-    pub fn set(&self, path: &str) -> Result<()> {
+    pub fn _set(&self, path: &str) -> Result<()> {
         info!("[Wallpaper] Attempting to set wallpaper: {}", path);
         unsafe {
             let mut wide = path.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
