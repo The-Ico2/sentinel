@@ -63,7 +63,8 @@ fn ensure_user_config_dirs() {
     }
 }
 
-fn is_addon_running(addon: &Addon) -> bool {
+// TODO: Actually Use when neccessary
+fn _is_addon_running(addon: &Addon) -> bool {
     let mut sys = System::new();
     sys.refresh_all();
     for (_pid, proc_) in sys.processes() {
