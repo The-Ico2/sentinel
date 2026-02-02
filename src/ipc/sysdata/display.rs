@@ -12,7 +12,6 @@ use windows::{
     },
 };
 
-
 #[derive(Serialize, Debug, Clone)]
 pub struct MonitorInfo {
     pub id: String,
