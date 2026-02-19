@@ -182,7 +182,7 @@ fn parse_creator_and_id(value: &str) -> (String, String, Option<String>) {
     (creator, name, id_part)
 }
 
-fn bootstrap_user_root() {
+pub fn bootstrap_user_root() {
     let sentinel = sentinel_root_dir();
     let _ = fs::create_dir_all(&sentinel);
     let _ = fs::create_dir_all(sentinel.join("Assets"));
@@ -195,9 +195,31 @@ fn bootstrap_user_root() {
     for exe in ["sentinelc.exe", "sentinel-tray.exe"] {
         let src = current_dir.join(exe);
         let dst = sentinel.join(exe);
-        if !dst.is_file() && src.is_file() {
-            if let Ok(_) = fs::copy(&src, &dst) { info!("Copied {} to {}", src.display(), dst.display()); }
-            else { warn!("Failed to copy {} to {}", src.display(), dst.display()); }
+            if !src.is_file() {
+                continue;
+            }
+
+            if src == dst {
+                continue;
+            }
+
+            let should_copy = match (fs::metadata(&src), fs::metadata(&dst)) {
+                (Ok(src_meta), Ok(dst_meta)) => {
+                    let src_newer = src_meta.modified().ok().zip(dst_meta.modified().ok())
+                        .map(|(s, d)| s > d)
+                        .unwrap_or(false);
+                    src_newer || src_meta.len() != dst_meta.len()
+                }
+                (Ok(_), Err(_)) => true,
+                _ => false,
+            };
+
+            if should_copy {
+                if fs::copy(&src, &dst).is_ok() {
+                    info!("Copied {} to {}", src.display(), dst.display());
+                } else {
+                    warn!("Failed to copy {} to {}", src.display(), dst.display());
+                }
         }
     }
 }

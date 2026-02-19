@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, EventKind, Config};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{OnceLock, RwLock, mpsc::channel},
     time::{Duration, Instant},
@@ -12,13 +13,13 @@ use std::{
 use crate::{
     info, warn, error,
     paths::sentinel_root_dir,
-    ipc::appdata::active_window::ActiveWindowManager,
+    ipc::appdata::window::ActiveWindowManager,
 };
 
 static LAST_REGISTRY_WRITE: OnceLock<RwLock<Instant>> = OnceLock::new();
 
 /// Single registry entry (addon, widget, etc)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegistryEntry {
     pub id: String,
     pub category: String,
@@ -29,7 +30,7 @@ pub struct RegistryEntry {
 }
 
 /// Entire registry state
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Registry {
     pub addons: Vec<RegistryEntry>,
     pub assets: Vec<RegistryEntry>,
@@ -333,6 +334,8 @@ pub fn registry_watcher() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting registry watcher");
     let (tx, rx) = channel();
     let root = sentinel_root_dir();
+    let addons_root = root.join("Addons");
+    let assets_root = root.join("Assets");
 
     let mut watcher: RecommendedWatcher =
         Watcher::new(tx, Config::default().with_poll_interval(Duration::from_millis(250)))?;
@@ -348,22 +351,33 @@ pub fn registry_watcher() -> Result<(), Box<dyn std::error::Error>> {
         match rx.recv() {
             Ok(Ok(event)) => {
                 if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)) {
-                    if event.paths.iter().any(|p| {
+                    let touches_registry_json = event.paths.iter().any(|p| {
                         p.file_name()
                             .and_then(|n| n.to_str())
                             .map(|n| n.eq_ignore_ascii_case("registry.json"))
                             .unwrap_or(false)
-                    }) {
-                        let last = LAST_REGISTRY_WRITE
-                            .get_or_init(|| RwLock::new(Instant::now()))
-                            .read()
-                            .unwrap();
+                    });
 
-                        if last.elapsed() < Duration::from_millis(500) {
-                            continue; // ignore self-write
+                    if touches_registry_json {
+                        continue;
+                    }
+
+                    let touches_content_tree = event.paths.iter().any(|p| {
+                        if !(p.starts_with(&addons_root) || p.starts_with(&assets_root)) {
+                            return false;
                         }
 
-                        info!("Detected external change to registry.json, reloading registry");
+                        p.file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|n| {
+                                n.eq_ignore_ascii_case("addon.json")
+                                    || n.eq_ignore_ascii_case("manifest.json")
+                            })
+                            .unwrap_or(false)
+                    });
+
+                    if touches_content_tree {
+                        info!("Detected Addons/Assets change, reloading registry");
                         reload_registry(&root);
                     }
 
@@ -407,7 +421,9 @@ fn reload_registry(root: &Path) {
 pub fn write_registry_json(reg: &Registry, root: &Path) {
     let path = root.join("registry.json");
 
-    let json = match serde_json::to_string_pretty(reg) {
+    let output = registry_to_output_json(reg);
+
+    let json = match serde_json::to_string_pretty(&output) {
         Ok(j) => j,
         Err(e) => {
             error!("Failed to serialize registry: {e}");
@@ -425,4 +441,168 @@ pub fn write_registry_json(reg: &Registry, root: &Path) {
 
         info!("registry.json updated");
     }
+}
+
+pub fn registry_to_output_json(reg: &Registry) -> Value {
+    serde_json::json!({
+        "addons": output_addons(&reg.addons),
+        "assets": output_assets(&reg.assets),
+        "sysdata": output_sysdata(&reg.sysdata),
+        "appdata": output_appdata(&reg.appdata, &reg.sysdata),
+    })
+}
+
+fn output_addons(addons: &[RegistryEntry]) -> Vec<Value> {
+    addons
+        .iter()
+        .map(|entry| {
+            let mut metadata = entry.metadata.clone();
+            if let Some(obj) = metadata.as_object_mut() {
+                obj.remove("exe_path");
+            }
+
+            serde_json::json!({
+                "id": entry.id,
+                "metadata": metadata,
+                "path": entry.path,
+                "entry_path": entry.exe_path,
+            })
+        })
+        .collect()
+}
+
+fn output_assets(assets: &[RegistryEntry]) -> Value {
+    let mut grouped = BTreeMap::<String, Vec<Value>>::new();
+
+    for entry in assets {
+        let mut metadata = entry.metadata.clone();
+        if let Some(obj) = metadata.as_object_mut() {
+            obj.remove("exe_path");
+        }
+
+        let entry_path = if let Some(v) = entry
+            .metadata
+            .get("files")
+            .and_then(|f| f.get("entry"))
+            .and_then(|v| v.as_str())
+        {
+            v.to_string()
+        } else if let Some(v) = entry.metadata.get("entry").and_then(|v| v.as_str()) {
+            v.to_string()
+        } else if entry.exe_path != "NULL" {
+            entry.exe_path.clone()
+        } else {
+            String::new()
+        };
+
+        grouped
+            .entry(entry.category.clone())
+            .or_default()
+            .push(serde_json::json!({
+                "id": entry.id,
+                "category": entry.category,
+                "subtype": entry.subtype,
+                "metadata": metadata,
+                "path": entry.path,
+                "entry_path": entry_path,
+            }));
+    }
+
+    serde_json::to_value(grouped).unwrap_or(Value::Null)
+}
+
+fn output_sysdata(sysdata: &[RegistryEntry]) -> Value {
+    let displays: Vec<Value> = sysdata
+        .iter()
+        .filter(|entry| entry.category.eq_ignore_ascii_case("display"))
+        .map(|entry| {
+            let id = entry
+                .metadata
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&entry.id)
+                .to_string();
+
+            serde_json::json!({
+                "id": id,
+                "category": entry.category,
+                "subtype": entry.subtype,
+                "metadata": entry.metadata,
+            })
+        })
+        .collect();
+
+    let category_meta = |name: &str| {
+        sysdata
+            .iter()
+            .find(|entry| entry.category.eq_ignore_ascii_case(name))
+            .map(|entry| entry.metadata.clone())
+            .unwrap_or(Value::Null)
+    };
+
+    serde_json::json!({
+        "displays": displays,
+        "cpu": category_meta("cpu"),
+        "ram": category_meta("ram"),
+        "gpu": category_meta("gpu"),
+        "storage": category_meta("storage"),
+        "network": category_meta("network"),
+        "temperature": category_meta("temp"),
+        "audio": category_meta("audio"),
+        "time": category_meta("time"),
+    })
+}
+
+fn output_appdata(appdata: &[RegistryEntry], sysdata: &[RegistryEntry]) -> Value {
+    let mut by_monitor = serde_json::Map::<String, Value>::new();
+
+    for display in sysdata
+        .iter()
+        .filter(|entry| entry.category.eq_ignore_ascii_case("display"))
+    {
+        if let Some(monitor_id) = display.metadata.get("id").and_then(|v| v.as_str()) {
+            by_monitor
+                .entry(monitor_id.to_string())
+                .or_insert_with(|| serde_json::json!({ "windows": [] }));
+        }
+    }
+
+    for entry in appdata {
+        if !entry.category.eq_ignore_ascii_case("active_window") {
+            continue;
+        }
+
+        let Some(monitor_id) = entry
+            .metadata
+            .get("monitor_id")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string())
+        else {
+            continue;
+        };
+
+        let window = serde_json::json!({
+            "focused": entry.metadata.get("focused").and_then(|v| v.as_bool()).unwrap_or(false),
+            "app_name": entry.metadata.get("app_name").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            "app_icon": entry.metadata.get("app_icon").and_then(|v| v.as_str()).unwrap_or(""),
+            "exe_path": entry.metadata.get("exe_path").and_then(|v| v.as_str()).unwrap_or(""),
+            "window_state": entry.metadata.get("window_state").and_then(|v| v.as_str()).unwrap_or("normal"),
+            "size": entry.metadata.get("size").cloned().unwrap_or_else(|| serde_json::json!({"width": 0, "height": 0})),
+            "position": entry.metadata.get("position").cloned().unwrap_or_else(|| serde_json::json!({"x": 0, "y": 0})),
+        });
+
+        by_monitor
+            .entry(monitor_id.clone())
+            .or_insert_with(|| serde_json::json!({ "windows": [] }));
+
+        if let Some(windows) = by_monitor
+            .get_mut(&monitor_id)
+            .and_then(|v| v.get_mut("windows"))
+            .and_then(|v| v.as_array_mut())
+        {
+            windows.push(window);
+        }
+    }
+
+    Value::Object(by_monitor)
 }

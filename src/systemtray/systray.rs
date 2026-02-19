@@ -116,11 +116,9 @@ pub fn spawn_tray() {
         }
     }));
 
-    let mut addons = discover_addons();
-    info!("Discovered {} addons for tray", addons.len());
+    let mut addons: Vec<Addon> = Vec::new();
     let mut children: HashMap<String, Child> = HashMap::new();
-    let mut autostart: HashMap<String, bool> =
-        addons.iter().map(|a| (a.name.clone(), false)).collect();
+    let mut autostart: HashMap<String, bool> = HashMap::new();
 
     let (mut menu, mut id_map) = build_systray(&addons, &autostart);
     let mut tray_icon: Option<TrayIcon> = None;
@@ -141,6 +139,22 @@ pub fn spawn_tray() {
                         .expect("Failed to build tray icon"),
                 );
                 ensure_user_config_dirs();
+
+                addons = discover_addons();
+                info!("Discovered {} addons for tray", addons.len());
+                autostart = addons.iter().map(|a| (a.name.clone(), false)).collect();
+                let (new_menu, new_map) = build_systray(&addons, &autostart);
+                let icon = load_icon(std::path::Path::new(icon_path));
+                tray_icon = Some(
+                    TrayIconBuilder::new()
+                        .with_menu(Box::new(new_menu.clone()))
+                        .with_tooltip("Sentinel WDCP")
+                        .with_icon(icon)
+                        .build()
+                        .expect("Failed to rebuild tray icon after addon discovery"),
+                );
+                menu = new_menu;
+                id_map = new_map;
             }
 
             Event::UserEvent(UserEvent::TrayIconEvent(event)) => match event {

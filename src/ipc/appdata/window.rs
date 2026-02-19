@@ -4,12 +4,13 @@ use serde::Serialize;
 use std::{collections::HashMap, path::PathBuf};
 use sha2::{Digest, Sha256};
 use windows::{
+    core::BOOL,
     Win32::{
-        Foundation::{HWND, RECT},
+        Foundation::{HWND, LPARAM, RECT},
         Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST},
         UI::WindowsAndMessaging::{
-            GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId,
-            IsZoomed, GWL_STYLE, WS_CAPTION, WS_THICKFRAME,
+            EnumWindows, GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId,
+            IsIconic, IsWindowVisible, IsZoomed, GWL_STYLE, WS_CAPTION, WS_THICKFRAME,
         },
     },
 };
@@ -23,58 +24,134 @@ use crate::{
 #[derive(Serialize, Debug, Clone)]
 pub struct ActiveWindowInfo {
     pub monitor_id: String,
+    pub focused: bool,
     pub app_icon: String,
     pub app_name: String,
     pub exe_path: String,
     pub window_state: String,
+    pub size: WindowSize,
+    pub position: WindowPosition,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct WindowSize {
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct WindowPosition {
+    pub x: i32,
+    pub y: i32,
 }
 
 pub struct ActiveWindowManager;
 
 impl ActiveWindowManager {
-    /// Enumerate active windows per monitor (focused window only)
-    /// Automatically tracks previous windows internally to log changes without flooding logs
+    /// Enumerate all visible, non-minimized windows and map each to its nearest monitor.
+    /// Focused window is tagged through metadata.focused.
     pub fn enumerate_active_windows() -> Vec<RegistryEntry> {
         use std::sync::Mutex;
 
-        // static store for previous active window names per monitor
-        static PREV_WINDOWS: once_cell::sync::Lazy<Mutex<HashMap<String, String>>> =
+        static PREV_FOCUSED_WINDOW: once_cell::sync::Lazy<Mutex<HashMap<String, String>>> =
             once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
 
-        let mut prev_windows = PREV_WINDOWS.lock().unwrap();
-        let mut results_map: HashMap<String, RegistryEntry> = HashMap::new();
+        let mut prev_focused = PREV_FOCUSED_WINDOW.lock().unwrap();
+        let mut results = Vec::new();
 
         unsafe {
-            let hwnd = GetForegroundWindow();
-            if hwnd.0 == std::ptr::null_mut() {
-                if !prev_windows.is_empty() {
+            let focused_hwnd = GetForegroundWindow();
+
+            if focused_hwnd.0 == std::ptr::null_mut() {
+                if !prev_focused.is_empty() {
                     warn!("No foreground window detected");
-                    prev_windows.clear();
+                    prev_focused.clear();
                 }
-                return vec![];
             }
 
-            if let Some(entry) = Self::window_to_monitor_info(hwnd) {
-                let monitor_id = entry.metadata["monitor_id"]
-                    .as_str()
-                    .unwrap_or("unknown")
-                    .to_string();
-                let app_name = entry.metadata["app_name"].as_str().unwrap_or("unknown");
+            let hwnds = Self::enumerate_candidate_windows();
+            if hwnds.is_empty() && focused_hwnd.0 != std::ptr::null_mut() {
+                if let Some(entry) = Self::window_to_monitor_info(focused_hwnd, focused_hwnd) {
+                    let monitor_id = entry.metadata["monitor_id"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let app_name = entry.metadata["app_name"].as_str().unwrap_or("unknown");
 
-                // Only log if the active window changed
-                if prev_windows.get(&monitor_id).map(|n| n.as_str()) != Some(app_name) {
-                    info!("Active window on monitor {} changed to {}", monitor_id, app_name);
-                    prev_windows.insert(monitor_id.clone(), app_name.to_string());
+                    if prev_focused.get(&monitor_id).map(|n| n.as_str()) != Some(app_name) {
+                        info!("Focused window on monitor {} changed to {}", monitor_id, app_name);
+                        prev_focused.insert(monitor_id.clone(), app_name.to_string());
+                    }
+
+                    results.push(entry);
                 }
+                return results;
+            }
 
-                results_map.insert(monitor_id, entry);
+            for hwnd in hwnds {
+                if let Some(entry) = Self::window_to_monitor_info(hwnd, focused_hwnd) {
+                    if entry
+                        .metadata
+                        .get("focused")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        let monitor_id = entry.metadata["monitor_id"]
+                            .as_str()
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let app_name = entry.metadata["app_name"].as_str().unwrap_or("unknown");
+
+                        if prev_focused.get(&monitor_id).map(|n| n.as_str()) != Some(app_name) {
+                            info!("Focused window on monitor {} changed to {}", monitor_id, app_name);
+                            prev_focused.insert(monitor_id.clone(), app_name.to_string());
+                        }
+                    }
+
+                    results.push(entry);
+                }
             }
         }
 
-        results_map.into_values().collect()
+        results
     }
 
-    unsafe fn window_to_monitor_info(hwnd: HWND) -> Option<RegistryEntry> {
+    unsafe fn enumerate_candidate_windows() -> Vec<HWND> {
+        unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            if hwnd.0 == std::ptr::null_mut() {
+                return BOOL(1);
+            }
+
+            if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+                return BOOL(1);
+            }
+
+            let mut rect: RECT = std::mem::zeroed();
+            if !GetWindowRect(hwnd, &mut rect).as_bool() {
+                return BOOL(1);
+            }
+
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if width <= 0 || height <= 0 {
+                return BOOL(1);
+            }
+
+            let handles = &mut *(lparam.0 as *mut Vec<HWND>);
+            handles.push(hwnd);
+            BOOL(1)
+        }
+
+        let mut handles: Vec<HWND> = Vec::new();
+        let handles_ptr = &mut handles as *mut Vec<HWND>;
+        let lparam = LPARAM(handles_ptr as isize);
+
+        let _ = EnumWindows(Some(enum_proc), lparam);
+
+        handles
+    }
+
+    unsafe fn window_to_monitor_info(hwnd: HWND, focused_hwnd: HWND) -> Option<RegistryEntry> {
         let mut rect: RECT = std::mem::zeroed();
         let rect_ok = GetWindowRect(hwnd, &mut rect).as_bool();
 
@@ -163,15 +240,24 @@ impl ActiveWindowManager {
         .to_string();
 
         Some(RegistryEntry {
-            id: format!("active_window_{}", monitor_id),
+            id: format!("active_window_{}_{}", monitor_id, hwnd.0 as usize),
             category: "active_window".into(),
             subtype: "monitor".into(),
             metadata: serde_json::json!(ActiveWindowInfo {
                 monitor_id,
+                focused: hwnd.0 == focused_hwnd.0,
                 app_icon,
                 app_name,
                 exe_path: exe_path.clone(),
                 window_state,
+                size: WindowSize {
+                    width: (rect.right - rect.left).max(0),
+                    height: (rect.bottom - rect.top).max(0),
+                },
+                position: WindowPosition {
+                    x: rect.left,
+                    y: rect.top,
+                },
             }),
             path: PathBuf::new(),
             exe_path,

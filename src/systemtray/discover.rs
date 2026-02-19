@@ -53,7 +53,11 @@ pub fn discover_addons() -> Vec<Addon> {
         .iter()
         .map(|entry| {
             let name = entry["metadata"]["name"].as_str().unwrap_or("unknown").to_string();
-            let exe_path = entry["exe_path"].as_str().unwrap_or_default().into();
+            let exe_path = entry["exe_path"]
+                .as_str()
+                .or_else(|| entry["entry_path"].as_str())
+                .unwrap_or_default()
+                .into();
             let dir = entry["path"].as_str().unwrap_or_default().into();
             let package = entry["id"].as_str().unwrap_or_default().to_string();
 
