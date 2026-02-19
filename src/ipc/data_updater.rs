@@ -4,7 +4,7 @@ use std::{thread, time::Duration};
 use crate::ipc::registry::{global_registry, write_registry_json};
 use crate::paths::sentinel_root_dir;
 use crate::ipc::{
-    sysdata::display::MonitorManager,
+    registry::pull_sysdata,
     appdata::active_window::ActiveWindowManager,
 };
 
@@ -19,18 +19,7 @@ pub fn start_registry_updater(interval_ms: Option<u64>) {
             let mut reg = global_registry().write().unwrap();
 
             // ----- SYSDATA -----
-            // Pull Monitors
-            reg.sysdata = MonitorManager::enumerate_monitors()
-                .into_iter()
-                .map(|m| crate::ipc::registry::RegistryEntry {
-                    id: format!("display_{}", m.id),
-                    category: "display".into(),
-                    subtype: "monitor".into(),
-                    metadata: serde_json::json!(m),
-                    path: std::path::PathBuf::new(),
-                    exe_path: "".into(),
-                })
-                .collect();
+            reg.sysdata = pull_sysdata();
 
             // ----- APPDATA -----
             // Pull Active Window

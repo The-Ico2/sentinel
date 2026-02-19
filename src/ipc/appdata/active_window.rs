@@ -7,7 +7,10 @@ use windows::{
     Win32::{
         Foundation::{HWND, RECT},
         Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST},
-        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId},
+        UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId,
+            IsZoomed, GWL_STYLE, WS_CAPTION, WS_THICKFRAME,
+        },
     },
 };
 use as_bool::AsBool;
@@ -23,7 +26,7 @@ pub struct ActiveWindowInfo {
     pub app_icon: String,
     pub app_name: String,
     pub exe_path: String,
-    pub full_screen: bool,
+    pub window_state: String,
 }
 
 pub struct ActiveWindowManager;
@@ -123,16 +126,41 @@ impl ActiveWindowManager {
             "".into()
         };
 
-        // Only compute fullscreen if rect succeeded
-        let full_screen = if rect_ok {
+        let maximized = IsZoomed(hwnd).as_bool();
+
+        let (covers_monitor, covers_work) = if rect_ok {
             let monitor_rc = mi_ex.monitorInfo.rcMonitor;
-            rect.left <= monitor_rc.left
-                && rect.top <= monitor_rc.top
-                && rect.right >= monitor_rc.right
-                && rect.bottom >= monitor_rc.bottom
+            let work_rc = mi_ex.monitorInfo.rcWork;
+            let epsilon = 1i32;
+
+            let monitor_match = (rect.left - monitor_rc.left).abs() <= epsilon
+                && (rect.top - monitor_rc.top).abs() <= epsilon
+                && (rect.right - monitor_rc.right).abs() <= epsilon
+                && (rect.bottom - monitor_rc.bottom).abs() <= epsilon;
+
+            let work_match = (rect.left - work_rc.left).abs() <= epsilon
+                && (rect.top - work_rc.top).abs() <= epsilon
+                && (rect.right - work_rc.right).abs() <= epsilon
+                && (rect.bottom - work_rc.bottom).abs() <= epsilon;
+
+            (monitor_match, work_match)
         } else {
-            false
+            (false, false)
         };
+
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let has_frame = (style & (WS_CAPTION.0 | WS_THICKFRAME.0)) != 0;
+
+        let fullscreen = covers_monitor && (!covers_work || !has_frame);
+
+        let window_state = if fullscreen {
+            "fullscreen"
+        } else if maximized || covers_work {
+            "maximized"
+        } else {
+            "normal"
+        }
+        .to_string();
 
         Some(RegistryEntry {
             id: format!("active_window_{}", monitor_id),
@@ -143,7 +171,7 @@ impl ActiveWindowManager {
                 app_icon,
                 app_name,
                 exe_path: exe_path.clone(),
-                full_screen,
+                window_state,
             }),
             path: PathBuf::new(),
             exe_path,

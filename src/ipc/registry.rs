@@ -174,7 +174,17 @@ pub fn discover_assets(assets_root: &Path) -> Vec<RegistryEntry> {
 }
 
 pub fn pull_sysdata() -> Vec<RegistryEntry> {
-    use crate::ipc::sysdata::display::MonitorManager;
+    use crate::ipc::sysdata::{
+        display::MonitorManager,
+        audio::get_audio_json,
+        cpu::get_cpu_json,
+        gpu::get_gpu_json,
+        network::get_network_json,
+        ram::get_ram_json,
+        storage::get_storage_json,
+        temp::get_temp_json,
+        time::get_time_json,
+    };
     use serde_json::json;
 
     let mut entries = Vec::new();
@@ -183,10 +193,11 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
     let monitors = MonitorManager::enumerate_monitors();
     for m in monitors {
         entries.push(RegistryEntry {
-            id: m.id.clone(),
+            id: format!("display_{}", m.id),
             category: "display".into(),
             subtype: "monitor".into(),
             metadata: json!({
+                "id": m.id,
                 "primary": m.primary,
                 "x": m.x,
                 "y": m.y,
@@ -204,7 +215,7 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         id: "cpu".into(),
         category: "cpu".into(),
         subtype: "system".into(),
-        metadata: json!({}),
+        metadata: get_cpu_json(),
         path: std::path::PathBuf::new(),
         exe_path: "".into(),
     });
@@ -214,7 +225,7 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         id: "ram".into(),
         category: "ram".into(),
         subtype: "system".into(),
-        metadata: json!({}),
+        metadata: get_ram_json(),
         path: std::path::PathBuf::new(),
         exe_path: "".into(),
     });
@@ -224,7 +235,7 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         id: "gpu".into(),
         category: "gpu".into(),
         subtype: "system".into(),
-        metadata: json!({}),
+        metadata: get_gpu_json(),
         path: std::path::PathBuf::new(),
         exe_path: "".into(),
     });
@@ -234,7 +245,7 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         id: "storage".into(),
         category: "storage".into(),
         subtype: "system".into(),
-        metadata: json!({}),
+        metadata: get_storage_json(),
         path: std::path::PathBuf::new(),
         exe_path: "".into(),
     });
@@ -244,7 +255,7 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         id: "network".into(),
         category: "network".into(),
         subtype: "system".into(),
-        metadata: json!({}),
+        metadata: get_network_json(),
         path: std::path::PathBuf::new(),
         exe_path: "".into(),
     });
@@ -254,7 +265,27 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         id: "temp".into(),
         category: "temp".into(),
         subtype: "system".into(),
-        metadata: json!({}),
+        metadata: get_temp_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // Audio
+    entries.push(RegistryEntry {
+        id: "audio".into(),
+        category: "audio".into(),
+        subtype: "system".into(),
+        metadata: get_audio_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // Time
+    entries.push(RegistryEntry {
+        id: "time".into(),
+        category: "time".into(),
+        subtype: "system".into(),
+        metadata: get_time_json(),
         path: std::path::PathBuf::new(),
         exe_path: "".into(),
     });

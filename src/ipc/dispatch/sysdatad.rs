@@ -5,6 +5,14 @@ use crate::ipc::sysdata::display::MonitorManager;
 use crate::ipc::registry::global_registry;
 use crate::ipc::sysdata::time as time_module;
 
+fn metadata_for_category(reg: &crate::ipc::registry::Registry, category: &str) -> Value {
+    reg.sysdata
+        .iter()
+        .find(|entry| entry.category.eq_ignore_ascii_case(category))
+        .map(|entry| entry.metadata.clone())
+        .unwrap_or(Value::Null)
+}
+
 pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
     let reg = global_registry().read().unwrap();
 
@@ -25,12 +33,13 @@ pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
 
             Ok(Value::Array(displays))
         }
-        "get_temp" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
-        "get_cpu" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
-        "get_gpu" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
-        "get_ram" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
-        "get_storage" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
-        "get_network" => Ok(serde_json::to_value(&reg.sysdata).unwrap()),
+        "get_temp" => Ok(metadata_for_category(&reg, "temp")),
+        "get_cpu" => Ok(metadata_for_category(&reg, "cpu")),
+        "get_gpu" => Ok(metadata_for_category(&reg, "gpu")),
+        "get_ram" => Ok(metadata_for_category(&reg, "ram")),
+        "get_storage" => Ok(metadata_for_category(&reg, "storage")),
+        "get_network" => Ok(metadata_for_category(&reg, "network")),
+        "get_audio" => Ok(metadata_for_category(&reg, "audio")),
         "get_time"=> Ok(time_module::get_time_json()),
         _ => Err(format!("Unknown sysdata command: {}", cmd)),
     }
