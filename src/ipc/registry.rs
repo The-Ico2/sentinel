@@ -183,7 +183,6 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         network::get_network_json,
         ram::get_ram_json,
         storage::get_storage_json,
-        temp::get_temp_json,
         time::get_time_json,
     };
     use serde_json::json;
@@ -257,16 +256,6 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         category: "network".into(),
         subtype: "system".into(),
         metadata: get_network_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Temp
-    entries.push(RegistryEntry {
-        id: "temp".into(),
-        category: "temp".into(),
-        subtype: "system".into(),
-        metadata: get_temp_json(),
         path: std::path::PathBuf::new(),
         exe_path: "".into(),
     });
@@ -547,7 +536,6 @@ fn output_sysdata(sysdata: &[RegistryEntry]) -> Value {
         "gpu": category_meta("gpu"),
         "storage": category_meta("storage"),
         "network": category_meta("network"),
-        "temperature": category_meta("temp"),
         "audio": category_meta("audio"),
         "time": category_meta("time"),
     })

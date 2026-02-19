@@ -33,7 +33,16 @@ pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
 
             Ok(Value::Array(displays))
         }
-        "get_temp" => Ok(metadata_for_category(&reg, "temp")),
+        "get_temp" => Ok(serde_json::json!({
+            "cpu": metadata_for_category(&reg, "cpu")
+                .get("temperature")
+                .cloned()
+                .unwrap_or(Value::Null),
+            "gpu": metadata_for_category(&reg, "gpu")
+                .get("temperature")
+                .cloned()
+                .unwrap_or(Value::Null),
+        })),
         "get_cpu" => Ok(metadata_for_category(&reg, "cpu")),
         "get_gpu" => Ok(metadata_for_category(&reg, "gpu")),
         "get_ram" => Ok(metadata_for_category(&reg, "ram")),

@@ -19,6 +19,7 @@ pub fn start_registry_updater(interval_ms: Option<u64>) {
         // Collect outside lock (can be slow)
         let sysdata = pull_sysdata();
         let appdata = ActiveWindowManager::enumerate_active_windows();
+        let mut sysdata_changed = false;
         let mut appdata_changed = false;
 
         {
@@ -27,6 +28,7 @@ pub fn start_registry_updater(interval_ms: Option<u64>) {
             // ----- SYSDATA -----
             if reg.sysdata != sysdata {
                 reg.sysdata = sysdata;
+                sysdata_changed = true;
             }
 
             // ----- APPDATA -----
@@ -37,7 +39,7 @@ pub fn start_registry_updater(interval_ms: Option<u64>) {
             }
         }
 
-        if appdata_changed {
+        if appdata_changed || sysdata_changed {
             let root = sentinel_root_dir();
             let snapshot = global_registry().read().unwrap().clone();
             write_registry_json(&snapshot, &root);

@@ -1,20 +1,30 @@
 // ~/sentinel/sentinel-backend/src/ipc/appdata/active_window.rs
 
 use serde::Serialize;
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::PathBuf,
+    sync::Mutex,
+};
 use sha2::{Digest, Sha256};
 use windows::{
     core::BOOL,
     Win32::{
         Foundation::{HWND, LPARAM, RECT},
+        System::StationsAndDesktops::{
+            CloseDesktop, OpenInputDesktop, SetThreadDesktop,
+            DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, DESKTOP_ENUMERATE, DESKTOP_READOBJECTS,
+        },
         Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST},
         UI::WindowsAndMessaging::{
-            EnumWindows, GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId,
-            IsIconic, IsWindowVisible, IsZoomed, GWL_STYLE, WS_CAPTION, WS_THICKFRAME,
+            EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect,
+            GetWindowTextLengthW,
+            GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed,
+            GWL_EXSTYLE, GWL_STYLE, GW_OWNER, WS_CAPTION, WS_EX_TOOLWINDOW, WS_THICKFRAME,
         },
     },
 };
-use as_bool::AsBool;
 
 use crate::{
     ipc::registry::RegistryEntry,
@@ -51,8 +61,6 @@ impl ActiveWindowManager {
     /// Enumerate all visible, non-minimized windows and map each to its nearest monitor.
     /// Focused window is tagged through metadata.focused.
     pub fn enumerate_active_windows() -> Vec<RegistryEntry> {
-        use std::sync::Mutex;
-
         static PREV_FOCUSED_WINDOW: once_cell::sync::Lazy<Mutex<HashMap<String, String>>> =
             once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -60,6 +68,7 @@ impl ActiveWindowManager {
         let mut results = Vec::new();
 
         unsafe {
+            let _ = Self::attach_thread_to_input_desktop();
             let focused_hwnd = GetForegroundWindow();
 
             if focused_hwnd.0 == std::ptr::null_mut() {
@@ -117,43 +126,69 @@ impl ActiveWindowManager {
     }
 
     unsafe fn enumerate_candidate_windows() -> Vec<HWND> {
-        unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        thread_local! {
+            static ENUM_HANDLES: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
+        }
+        unsafe extern "system" fn enum_proc(hwnd: HWND, _lparam: LPARAM) -> BOOL {
             if hwnd.0 == std::ptr::null_mut() {
-                return BOOL(1);
+                return BOOL::from(true);
             }
 
-            if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
-                return BOOL(1);
+            if IsWindowVisible(hwnd).0 == 0 || IsIconic(hwnd).0 != 0 {
+                return BOOL::from(true);
+            }
+
+            let owner = GetWindow(hwnd, GW_OWNER).ok();
+            if owner.map(|h| h.0 != std::ptr::null_mut()).unwrap_or(false) {
+                return BOOL::from(true);
+            }
+
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+            if (ex_style & WS_EX_TOOLWINDOW.0) != 0 {
+                return BOOL::from(true);
+            }
+
+            if GetWindowTextLengthW(hwnd) <= 0 {
+                return BOOL::from(true);
             }
 
             let mut rect: RECT = std::mem::zeroed();
-            if !GetWindowRect(hwnd, &mut rect).as_bool() {
-                return BOOL(1);
+            if GetWindowRect(hwnd, &mut rect).is_err() {
+                return BOOL::from(true);
             }
 
             let width = rect.right - rect.left;
             let height = rect.bottom - rect.top;
             if width <= 0 || height <= 0 {
-                return BOOL(1);
+                return BOOL::from(true);
             }
 
-            let handles = &mut *(lparam.0 as *mut Vec<HWND>);
-            handles.push(hwnd);
-            BOOL(1)
+            ENUM_HANDLES.with(|handles| handles.borrow_mut().push(hwnd));
+            BOOL::from(true)
         }
 
-        let mut handles: Vec<HWND> = Vec::new();
-        let handles_ptr = &mut handles as *mut Vec<HWND>;
-        let lparam = LPARAM(handles_ptr as isize);
+        ENUM_HANDLES.with(|handles| handles.borrow_mut().clear());
+        let _ = EnumWindows(Some(enum_proc), LPARAM(0));
+        ENUM_HANDLES.with(|handles| handles.borrow().clone())
+    }
 
-        let _ = EnumWindows(Some(enum_proc), lparam);
+    unsafe fn attach_thread_to_input_desktop() -> bool {
+        let access = DESKTOP_ACCESS_FLAGS(
+            DESKTOP_READOBJECTS.0 | DESKTOP_ENUMERATE.0 | 0x0100 | 0x0080 | 0x0002,
+        );
+        let desktop = match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, access) {
+            Ok(hdesk) => hdesk,
+            Err(_) => return false,
+        };
 
-        handles
+        let set_ok = SetThreadDesktop(desktop).is_ok();
+        let _ = CloseDesktop(desktop);
+        set_ok
     }
 
     unsafe fn window_to_monitor_info(hwnd: HWND, focused_hwnd: HWND) -> Option<RegistryEntry> {
         let mut rect: RECT = std::mem::zeroed();
-        let rect_ok = GetWindowRect(hwnd, &mut rect).as_bool();
+        let rect_ok = GetWindowRect(hwnd, &mut rect).is_ok();
 
         let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         if monitor.0 == std::ptr::null_mut() {
@@ -163,7 +198,7 @@ impl ActiveWindowManager {
 
         let mut mi_ex: MONITORINFOEXW = std::mem::zeroed();
         mi_ex.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-        if !GetMonitorInfoW(monitor, &mut mi_ex.monitorInfo).as_bool() {
+        if GetMonitorInfoW(monitor, &mut mi_ex.monitorInfo).0 == 0 {
             error!("GetMonitorInfoW failed for monitor HWND={:?}", hwnd.0);
             return None;
         }
@@ -197,13 +232,26 @@ impl ActiveWindowManager {
             "unknown".into()
         };
 
+        let app_name_lower = app_name.to_ascii_lowercase();
+        if matches!(
+            app_name_lower.as_str(),
+            "textinputhost.exe"
+                | "searchhost.exe"
+                | "shellexperiencehost.exe"
+                | "startmenuexperiencehost.exe"
+                | "applicationframehost.exe"
+                | "systemsettings.exe"
+        ) {
+            return None;
+        }
+
         let app_icon = if !exe_path.is_empty() {
             format!("{}\\icon.ico", exe_path)
         } else {
             "".into()
         };
 
-        let maximized = IsZoomed(hwnd).as_bool();
+        let maximized = IsZoomed(hwnd).0 != 0;
 
         let (covers_monitor, covers_work) = if rect_ok {
             let monitor_rc = mi_ex.monitorInfo.rcMonitor;
