@@ -11,6 +11,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_HiDpi",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
@@ -32,6 +33,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_WindowsProgramming",
     "Win32_Storage",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_StructuredStorage",
     "Win32_Security",
 ]}
 

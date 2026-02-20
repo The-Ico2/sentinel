@@ -58,9 +58,9 @@ impl SentinelDaemon {
         info!("Starting registry manager");
         registry_manager();
 
-        // Start live sysdata/appdata updater (every 500ms)
+        // Start live sysdata/appdata updater (every 100ms)
         info!("Starting live data updater");
-        crate::ipc::data_updater::start_registry_updater(Some(500));
+        crate::ipc::data_updater::start_registry_updater(Some(100));
 
         // Start IPC server in a separate thread
         info!("Spawning IPC server thread");

@@ -4,11 +4,27 @@ use serde_json::{json, Value};
 use std::{cell::RefCell, collections::VecDeque};
 use windows::Win32::{
 	Media::Audio::{
-		eCapture, eConsole, eMultimedia, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
+		eCapture, eConsole, eMultimedia, eRender, IMMDevice, IMMDeviceEnumerator,
+		MMDeviceEnumerator,
 	},
 	Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioMeterInformation},
-	System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED},
+	Storage::StructuredStorage::STGM_READ,
+	System::Com::{CoCreateInstance, CoInitializeEx, PropVariantClear, CLSCTX_ALL, COINIT_APARTMENTTHREADED},
+	UI::Shell::PropertiesSystem::PKEY_Device_FriendlyName,
 };
+
+unsafe fn endpoint_friendly_name(device: &IMMDevice) -> Option<String> {
+	let store = device.OpenPropertyStore(STGM_READ).ok()?;
+	let mut value = store.GetValue(&PKEY_Device_FriendlyName).ok()?;
+	let name = value.Anonymous.Anonymous.Anonymous.pwszVal.to_string().ok()?;
+	let _ = PropVariantClear(&mut value);
+	let trimmed = name.trim().to_string();
+	if trimmed.is_empty() {
+		None
+	} else {
+		Some(trimmed)
+	}
+}
 
 thread_local! {
 	static AUDIO_STATE: RefCell<Option<BackendAudioState>> = const { RefCell::new(None) };
@@ -19,6 +35,8 @@ struct BackendAudioState {
 	output_meter: Option<IAudioMeterInformation>,
 	output_volume: Option<IAudioEndpointVolume>,
 	input_volume: Option<IAudioEndpointVolume>,
+	output_name: String,
+	input_name: String,
 	peak_ema: f32,
 	rms_ema: f32,
 	peak_history: VecDeque<f32>,
@@ -36,10 +54,33 @@ impl BackendAudioState {
 				output_meter: None,
 				output_volume: None,
 				input_volume: None,
+				output_name: "default-output".to_string(),
+				input_name: "default-input".to_string(),
 				peak_ema: 0.0,
 				rms_ema: 0.0,
 				peak_history: VecDeque::with_capacity(64),
 			};
+
+			if let Ok(output) = state
+				.enumerator
+				.GetDefaultAudioEndpoint(eRender, eMultimedia)
+				.or_else(|_| state.enumerator.GetDefaultAudioEndpoint(eRender, eConsole))
+			{
+				if let Some(name) = endpoint_friendly_name(&output) {
+					state.output_name = name;
+				}
+			}
+
+			if let Ok(input) = state
+				.enumerator
+				.GetDefaultAudioEndpoint(eCapture, eMultimedia)
+				.or_else(|_| state.enumerator.GetDefaultAudioEndpoint(eCapture, eConsole))
+			{
+				if let Some(name) = endpoint_friendly_name(&input) {
+					state.input_name = name;
+				}
+			}
+
 			state.refresh();
 			Ok(state)
 		}
@@ -56,6 +97,9 @@ impl BackendAudioState {
 				.GetDefaultAudioEndpoint(eRender, eMultimedia)
 				.or_else(|_| self.enumerator.GetDefaultAudioEndpoint(eRender, eConsole))
 			{
+				if let Some(name) = endpoint_friendly_name(&output) {
+					self.output_name = name;
+				}
 				self.output_meter = output.Activate::<IAudioMeterInformation>(CLSCTX_ALL, None).ok();
 				self.output_volume = output.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok();
 			}
@@ -65,6 +109,9 @@ impl BackendAudioState {
 				.GetDefaultAudioEndpoint(eCapture, eMultimedia)
 				.or_else(|_| self.enumerator.GetDefaultAudioEndpoint(eCapture, eConsole))
 			{
+				if let Some(name) = endpoint_friendly_name(&input) {
+					self.input_name = name;
+				}
 				self.input_volume = input.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok();
 			}
 		}
@@ -175,7 +222,7 @@ pub fn get_audio_json() -> Value {
 
 		json!({
 			"output_device": {
-				"name": "default-output",
+				"name": state.output_name.clone(),
 				"volume_percent": (output_volume * 100.0).round(),
 				"muted": output_muted,
 				"audio_level": output_peak,
@@ -195,7 +242,7 @@ pub fn get_audio_json() -> Value {
 				}
 			},
 			"input_device": {
-				"name": "default-input",
+				"name": state.input_name.clone(),
 				"volume_percent": (input_volume * 100.0).round(),
 				"muted": input_muted,
 			}

@@ -10,7 +10,7 @@ use crate::ipc::{
 };
 
 /// Interval in milliseconds
-const DEFAULT_INTERVAL_MS: u64 = 500;
+const DEFAULT_INTERVAL_MS: u64 = 100;
 
 pub fn start_registry_updater(interval_ms: Option<u64>) {
     let interval = Duration::from_millis(interval_ms.unwrap_or(DEFAULT_INTERVAL_MS));
