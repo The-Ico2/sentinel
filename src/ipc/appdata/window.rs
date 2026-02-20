@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/appdata/active_window.rs
+// ~/sentinel/sentinel-backend/src/ipc/appdata/window.rs
 
 use serde::Serialize;
 use std::{
@@ -12,10 +12,6 @@ use windows::{
     core::BOOL,
     Win32::{
         Foundation::{HWND, LPARAM, RECT},
-        System::StationsAndDesktops::{
-            CloseDesktop, OpenInputDesktop, SetThreadDesktop,
-            DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, DESKTOP_ENUMERATE, DESKTOP_READOBJECTS,
-        },
         Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST},
         UI::WindowsAndMessaging::{
             EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect,
@@ -68,7 +64,6 @@ impl ActiveWindowManager {
         let mut results = Vec::new();
 
         unsafe {
-            let _ = Self::attach_thread_to_input_desktop();
             let focused_hwnd = GetForegroundWindow();
 
             if focused_hwnd.0 == std::ptr::null_mut() {
@@ -129,6 +124,7 @@ impl ActiveWindowManager {
         thread_local! {
             static ENUM_HANDLES: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
         }
+
         unsafe extern "system" fn enum_proc(hwnd: HWND, _lparam: LPARAM) -> BOOL {
             if hwnd.0 == std::ptr::null_mut() {
                 return BOOL::from(true);
@@ -170,20 +166,6 @@ impl ActiveWindowManager {
         ENUM_HANDLES.with(|handles| handles.borrow_mut().clear());
         let _ = EnumWindows(Some(enum_proc), LPARAM(0));
         ENUM_HANDLES.with(|handles| handles.borrow().clone())
-    }
-
-    unsafe fn attach_thread_to_input_desktop() -> bool {
-        let access = DESKTOP_ACCESS_FLAGS(
-            DESKTOP_READOBJECTS.0 | DESKTOP_ENUMERATE.0 | 0x0100 | 0x0080 | 0x0002,
-        );
-        let desktop = match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, access) {
-            Ok(hdesk) => hdesk,
-            Err(_) => return false,
-        };
-
-        let set_ok = SetThreadDesktop(desktop).is_ok();
-        let _ = CloseDesktop(desktop);
-        set_ok
     }
 
     unsafe fn window_to_monitor_info(hwnd: HWND, focused_hwnd: HWND) -> Option<RegistryEntry> {
@@ -311,5 +293,4 @@ impl ActiveWindowManager {
             exe_path,
         })
     }
-
 }
