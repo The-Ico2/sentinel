@@ -115,6 +115,20 @@ struct ShellIpcMessage {
     addon_id: Option<String>,
     wallpaper_id: Option<String>,
     monitor_ids: Option<Vec<String>>,
+    monitor_indexes: Option<Vec<String>>,
+}
+
+fn parse_shell_ipc_message(body: &str) -> Option<ShellIpcMessage> {
+    if let Ok(direct) = serde_json::from_str::<ShellIpcMessage>(body) {
+        return Some(direct);
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    let payload = value
+        .get("payload")
+        .cloned()
+        .unwrap_or_else(|| value.clone());
+    serde_json::from_value::<ShellIpcMessage>(payload).ok()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -316,10 +330,12 @@ fn run_sentinel_custom_tabs_shell(
                 .with_url(&shell_url)
                 .with_ipc_handler(|request| {
                     let payload = request.body();
-                    let parsed = serde_json::from_str::<ShellIpcMessage>(payload);
-                    let Ok(message) = parsed else {
+                    let Some(message) = parse_shell_ipc_message(payload) else {
+                        warn!("[ui] Unrecognized shell IPC payload: {}", payload);
                         return;
                     };
+
+                    info!("[ui] Shell IPC message kind='{}'", message.kind);
 
                     if !message.kind.eq_ignore_ascii_case("wallpaper_apply_assignment") {
                         return;
@@ -333,19 +349,27 @@ fn run_sentinel_custom_tabs_shell(
                         _ => return,
                     };
                     let monitor_ids = message.monitor_ids.unwrap_or_default();
+                    let monitor_indexes = message.monitor_indexes.unwrap_or_default();
 
-                    match apply_wallpaper_assignment_from_shell(&addon_id, &wallpaper_id, &monitor_ids) {
+                    match apply_wallpaper_assignment_from_shell(
+                        &addon_id,
+                        &wallpaper_id,
+                        &monitor_ids,
+                        &monitor_indexes,
+                    ) {
                         Ok(_) => info!(
-                            "[ui] Saved wallpaper assignment: addon='{}' wallpaper='{}' monitors={:?}",
-                            addon_id,
-                            wallpaper_id,
-                            monitor_ids
-                        ),
-                        Err(e) => warn!(
-                            "[ui] Failed saving wallpaper assignment: addon='{}' wallpaper='{}' monitors={:?} error={}",
+                            "[ui] Saved wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?}",
                             addon_id,
                             wallpaper_id,
                             monitor_ids,
+                            monitor_indexes
+                        ),
+                        Err(e) => warn!(
+                            "[ui] Failed saving wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?} error={}",
+                            addon_id,
+                            wallpaper_id,
+                            monitor_ids,
+                            monitor_indexes,
                             e
                         ),
                     }
@@ -753,8 +777,9 @@ fn apply_wallpaper_assignment_from_shell(
     addon_id: &str,
     wallpaper_id: &str,
     monitor_ids: &[String],
+    monitor_indexes: &[String],
 ) -> Result<(), String> {
-    if monitor_ids.is_empty() {
+    if monitor_ids.is_empty() && monitor_indexes.is_empty() {
         return Err("No monitor IDs supplied".to_string());
     }
 
@@ -763,24 +788,31 @@ fn apply_wallpaper_assignment_from_shell(
         .find(|a| a.id.eq_ignore_ascii_case(addon_id))
         .ok_or_else(|| format!("Addon '{}' not found", addon_id))?;
 
-    let mut monitors = MonitorManager::enumerate_monitors()
-        .into_iter()
-        .map(|m| WallpaperShellMonitor {
-            id: m.id,
-            x: m.x,
-            y: m.y,
-            width: m.width,
-            height: m.height,
-            scale: m.scale,
-            primary: m.primary,
-        })
+    let mut target_indexes = monitor_indexes
+        .iter()
+        .filter(|v| !v.trim().is_empty())
+        .cloned()
         .collect::<Vec<_>>();
-    sort_monitors_for_wallpaper_indexes(&mut monitors);
 
-    let mut target_indexes = Vec::<String>::new();
-    for monitor_id in monitor_ids {
-        if let Some(idx) = monitors.iter().position(|m| m.id == *monitor_id) {
-            target_indexes.push(idx.to_string());
+    if target_indexes.is_empty() {
+        let mut monitors = MonitorManager::enumerate_monitors()
+            .into_iter()
+            .map(|m| WallpaperShellMonitor {
+                id: m.id,
+                x: m.x,
+                y: m.y,
+                width: m.width,
+                height: m.height,
+                scale: m.scale,
+                primary: m.primary,
+            })
+            .collect::<Vec<_>>();
+        sort_monitors_for_wallpaper_indexes(&mut monitors);
+
+        for monitor_id in monitor_ids {
+            if let Some(idx) = monitors.iter().position(|m| m.id == *monitor_id) {
+                target_indexes.push(idx.to_string());
+            }
         }
     }
     target_indexes.sort();
@@ -987,12 +1019,23 @@ fn build_sentinel_custom_tabs_shell_html(
         let currentAddonId = {selected_json};
         let currentTabId = null;
 
+        window.__sentinelBridgePost = (payload) => {{
+            if (!payload) return false;
+            if (window.ipc && typeof window.ipc.postMessage === 'function') {{
+                window.ipc.postMessage(JSON.stringify(payload));
+                return true;
+            }}
+            if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {{
+                window.chrome.webview.postMessage(payload);
+                return true;
+            }}
+            return false;
+        }};
+
         window.addEventListener('message', (event) => {{
             const data = event && event.data;
             if (!data || !data.sentinelBridge || !data.payload) return;
-            if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {{
-                window.chrome.webview.postMessage(data.payload);
-            }}
+            window.__sentinelBridgePost(data.payload);
         }});
 
         function getAddon() {{
