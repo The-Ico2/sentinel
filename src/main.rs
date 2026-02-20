@@ -9,10 +9,11 @@ mod paths;
 mod ipc;
 mod systemtray;
 mod utils;
+mod config_ui;
 
 use crate::{
     cli::{run_cli, bootstrap_user_root},
-    systemtray::systray::spawn_tray,
+    systemtray::systray::{spawn_tray, start_configured_autostart_addons},
     ipc::{
         server::start_ipc_server,
         registry::registry_manager,
@@ -70,6 +71,9 @@ impl SentinelDaemon {
             info!("IPC server thread terminated");
         });
 
+        info!("Starting configured addon autostarts");
+        start_configured_autostart_addons();
+
         // Start system tray
         info!("Starting system tray");
         spawn_tray();
@@ -95,10 +99,19 @@ fn acquire_single_instance() -> Option<HANDLE> {
 }
 
 fn main() {
-    let _instance_guard = match acquire_single_instance() {
-        Some(handle) => handle,
-        None => {
-            return;
+    let args: Vec<String> = std::env::args().collect();
+    let is_ui_mode = args
+        .iter()
+        .any(|a| a == "--addon-config-ui" || a == "--sentinel-ui" || a == "--addon-webview");
+
+    let instance_guard = if is_ui_mode {
+        None
+    } else {
+        match acquire_single_instance() {
+            Some(handle) => Some(handle),
+            None => {
+                return;
+            }
         }
     };
 
@@ -113,8 +126,10 @@ fn main() {
         if let Err(e) = run_cli() {
             error!("CLI bridge error: {e}");
         }
-        unsafe {
-            let _ = CloseHandle(_instance_guard);
+        if let Some(handle) = instance_guard {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
         }
         return;
     }
@@ -124,7 +139,9 @@ fn main() {
 
     info!("Sentinel backend exiting");
 
-    unsafe {
-        let _ = CloseHandle(_instance_guard);
+    if let Some(handle) = instance_guard {
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
     }
 }

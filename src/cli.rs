@@ -292,6 +292,36 @@ fn best_matches<'a>(items: &'a [FoundItem], creator_like: &str, name_like: &str)
 pub fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     bootstrap_user_root();
 
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--sentinel-ui") {
+        info!("Launching Sentinel UI shell");
+        crate::config_ui::run_sentinel_ui(None)?;
+        return Ok(());
+    }
+
+    if let Some(flag_index) = args.iter().position(|a| a == "--addon-config-ui") {
+        let addon_ref = args
+            .get(flag_index + 1)
+            .ok_or("Missing addon id/name after --addon-config-ui")?;
+        info!("Launching addon config UI for '{}'", addon_ref);
+        crate::config_ui::run_addon_config_ui(addon_ref)?;
+        return Ok(());
+    }
+
+    if let Some(flag_index) = args.iter().position(|a| a == "--addon-webview") {
+        let page_path = args
+            .get(flag_index + 1)
+            .ok_or("Missing page path after --addon-webview")?;
+        let page_title = args
+            .iter()
+            .position(|a| a == "--addon-webview-title")
+            .and_then(|idx| args.get(idx + 1))
+            .map(|s| s.as_str());
+        info!("Launching standalone addon webview for '{}'", page_path);
+        crate::config_ui::run_standalone_webview(page_path, page_title)?;
+        return Ok(());
+    }
+
     if std::env::args().count() == 1 {
         info!("No CLI args provided, skipping CLI execution");
         return Ok(());
