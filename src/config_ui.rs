@@ -328,50 +328,82 @@ fn run_sentinel_custom_tabs_shell(
 
         let webview = WebViewBuilder::new()
                 .with_url(&shell_url)
+                .with_initialization_script(
+                    // This runs in ALL frames (main + iframes) on WebView2.
+                    // It exposes window.__sentinelIPC(payload) which posts a
+                    // string message to Rust via chrome.webview.postMessage.
+                    // This works from iframes because WebView2 injects
+                    // chrome.webview into all frames.
+                    r#"
+                    (function() {
+                        window.__sentinelIPC = function(payload) {
+                            try {
+                                var msg = (typeof payload === 'string') ? payload : JSON.stringify(payload);
+                                if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {
+                                    window.chrome.webview.postMessage(msg);
+                                    return true;
+                                }
+                                if (window.ipc && typeof window.ipc.postMessage === 'function') {
+                                    window.ipc.postMessage(msg);
+                                    return true;
+                                }
+                            } catch(e) {}
+                            return false;
+                        };
+                    })();
+                    "#.to_string()
+                )
                 .with_ipc_handler(|request| {
-                    let payload = request.body();
-                    let Some(message) = parse_shell_ipc_message(payload) else {
-                        warn!("[ui] Unrecognized shell IPC payload: {}", payload);
-                        return;
-                    };
+                    let payload = request.body().to_string();
+                    warn!("[ui] IPC handler invoked, payload length={}", payload.len());
+                    let result = std::panic::catch_unwind(move || {
+                        let Some(message) = parse_shell_ipc_message(&payload) else {
+                            warn!("[ui] Unrecognized shell IPC payload: {}", payload);
+                            return;
+                        };
 
-                    info!("[ui] Shell IPC message kind='{}'", message.kind);
+                        warn!("[ui] Shell IPC message kind='{}'", message.kind);
 
-                    if !message.kind.eq_ignore_ascii_case("wallpaper_apply_assignment") {
-                        return;
-                    }
+                        if !message.kind.eq_ignore_ascii_case("wallpaper_apply_assignment") {
+                            return;
+                        }
 
-                    let addon_id = message
-                        .addon_id
-                        .unwrap_or_else(|| "sentinel.addon.wallpaper".to_string());
-                    let wallpaper_id = match message.wallpaper_id {
-                        Some(v) if !v.trim().is_empty() => v,
-                        _ => return,
-                    };
-                    let monitor_ids = message.monitor_ids.unwrap_or_default();
-                    let monitor_indexes = message.monitor_indexes.unwrap_or_default();
+                        let addon_id = message
+                            .addon_id
+                            .unwrap_or_else(|| "sentinel.addon.wallpaper".to_string());
+                        let wallpaper_id = match message.wallpaper_id {
+                            Some(v) if !v.trim().is_empty() => v,
+                            _ => return,
+                        };
+                        let monitor_ids = message.monitor_ids.unwrap_or_default();
+                        let monitor_indexes = message.monitor_indexes.unwrap_or_default();
 
-                    match apply_wallpaper_assignment_from_shell(
-                        &addon_id,
-                        &wallpaper_id,
-                        &monitor_ids,
-                        &monitor_indexes,
-                    ) {
-                        Ok(_) => info!(
-                            "[ui] Saved wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?}",
-                            addon_id,
-                            wallpaper_id,
-                            monitor_ids,
-                            monitor_indexes
-                        ),
-                        Err(e) => warn!(
-                            "[ui] Failed saving wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?} error={}",
-                            addon_id,
-                            wallpaper_id,
-                            monitor_ids,
-                            monitor_indexes,
-                            e
-                        ),
+                        match apply_wallpaper_assignment_from_shell(
+                            &addon_id,
+                            &wallpaper_id,
+                            &monitor_ids,
+                            &monitor_indexes,
+                        ) {
+                            Ok(_) => warn!(
+                                "[ui] Saved wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?}",
+                                addon_id,
+                                wallpaper_id,
+                                monitor_ids,
+                                monitor_indexes
+                            ),
+                            Err(e) => warn!(
+                                "[ui] Failed saving wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?} error={}",
+                                addon_id,
+                                wallpaper_id,
+                                monitor_ids,
+                                monitor_indexes,
+                                e
+                            ),
+                        }
+                    });
+
+                    if result.is_err() {
+                        warn!("[ui] Recovered from panic while handling shell IPC message");
                     }
                 })
                 .build(&window)
@@ -380,12 +412,23 @@ fn run_sentinel_custom_tabs_shell(
         event_loop.run(move |event, _, control_flow| {
                 let _keep_alive = &webview;
                 *control_flow = ControlFlow::Wait;
-                if let Event::WindowEvent {
-                        event: WindowEvent::CloseRequested,
-                        ..
-                } = event
-                {
-                        *control_flow = ControlFlow::Exit;
+                match &event {
+                    Event::WindowEvent { event: win_event, .. } => {
+                        match win_event {
+                            WindowEvent::CloseRequested => {
+                                warn!("[ui] Shell window CloseRequested — exiting event loop");
+                                *control_flow = ControlFlow::Exit;
+                            }
+                            WindowEvent::Destroyed => {
+                                warn!("[ui] Shell window Destroyed event received");
+                            }
+                            _ => {}
+                        }
+                    }
+                    Event::LoopDestroyed => {
+                        warn!("[ui] Shell event loop destroyed");
+                    }
+                    _ => {}
                 }
         });
 }
@@ -1021,21 +1064,45 @@ fn build_sentinel_custom_tabs_shell_html(
 
         window.__sentinelBridgePost = (payload) => {{
             if (!payload) return false;
-            if (window.ipc && typeof window.ipc.postMessage === 'function') {{
-                window.ipc.postMessage(JSON.stringify(payload));
-                return true;
-            }}
-            if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {{
-                window.chrome.webview.postMessage(payload);
-                return true;
-            }}
+            try {{
+                if (window.ipc && typeof window.ipc.postMessage === 'function') {{
+                    window.ipc.postMessage(JSON.stringify(payload));
+                    return true;
+                }}
+            }} catch (_) {{}}
+            try {{
+                if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {{
+                    window.chrome.webview.postMessage(payload);
+                    return true;
+                }}
+            }} catch (_) {{}}
             return false;
         }};
 
         window.addEventListener('message', (event) => {{
-            const data = event && event.data;
-            if (!data || !data.sentinelBridge || !data.payload) return;
-            window.__sentinelBridgePost(data.payload);
+            let data = event && event.data;
+            if (!data) return;
+
+            document.title = 'Sentinel [msg:' + (typeof data) + ']';
+
+            if (typeof data === 'string') {{
+                try {{
+                    data = JSON.parse(data);
+                }} catch (_) {{
+                    return;
+                }}
+            }}
+
+            if (data && data.sentinelBridge && data.payload) {{
+                const ok = window.__sentinelBridgePost(data.payload);
+                document.title = 'Sentinel [bridge:' + ok + ']';
+                return;
+            }}
+
+            if (data && data.type) {{
+                const ok = window.__sentinelBridgePost(data);
+                document.title = 'Sentinel [direct:' + ok + ']';
+            }}
         }});
 
         function getAddon() {{
