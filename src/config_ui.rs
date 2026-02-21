@@ -256,8 +256,7 @@ pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::err
 
     let custom_tab_addons = collect_custom_tab_shell_addons(&addon_catalog);
     if !custom_tab_addons.is_empty() {
-        info!("Launching Sentinel WebView shell for custom addon tabs");
-        return run_sentinel_custom_tabs_shell(custom_tab_addons, addon_focus);
+        warn!("[ui] Custom-tab WebView shell is temporarily disabled; using native Addons UI");
     }
 
     let mut selected = 0usize;
