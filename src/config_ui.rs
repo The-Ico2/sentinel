@@ -124,10 +124,22 @@ fn parse_shell_ipc_message(body: &str) -> Option<ShellIpcMessage> {
     }
 
     let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    if let Some(as_text) = value.as_str() {
+        if let Ok(direct_text) = serde_json::from_str::<ShellIpcMessage>(as_text) {
+            return Some(direct_text);
+        }
+    }
     let payload = value
         .get("payload")
         .cloned()
         .unwrap_or_else(|| value.clone());
+
+    if let Some(payload_text) = payload.as_str() {
+        if let Ok(from_payload_text) = serde_json::from_str::<ShellIpcMessage>(payload_text) {
+            return Some(from_payload_text);
+        }
+    }
+
     serde_json::from_value::<ShellIpcMessage>(payload).ok()
 }
 
@@ -329,49 +341,60 @@ fn run_sentinel_custom_tabs_shell(
         let webview = WebViewBuilder::new()
                 .with_url(&shell_url)
                 .with_ipc_handler(|request| {
-                    let payload = request.body();
-                    let Some(message) = parse_shell_ipc_message(payload) else {
-                        warn!("[ui] Unrecognized shell IPC payload: {}", payload);
-                        return;
-                    };
+                    let payload = request.body().to_string();
+                    let result = std::panic::catch_unwind(move || {
+                        warn!("[ui] Shell IPC raw payload: {}", payload);
 
-                    info!("[ui] Shell IPC message kind='{}'", message.kind);
+                        let Some(message) = parse_shell_ipc_message(&payload) else {
+                            warn!("[ui] Unrecognized shell IPC payload: {}", payload);
+                            return;
+                        };
 
-                    if !message.kind.eq_ignore_ascii_case("wallpaper_apply_assignment") {
-                        return;
-                    }
+                        warn!("[ui] Shell IPC message kind='{}'", message.kind);
 
-                    let addon_id = message
-                        .addon_id
-                        .unwrap_or_else(|| "sentinel.addon.wallpaper".to_string());
-                    let wallpaper_id = match message.wallpaper_id {
-                        Some(v) if !v.trim().is_empty() => v,
-                        _ => return,
-                    };
-                    let monitor_ids = message.monitor_ids.unwrap_or_default();
-                    let monitor_indexes = message.monitor_indexes.unwrap_or_default();
+                        if !message.kind.eq_ignore_ascii_case("wallpaper_apply_assignment") {
+                            return;
+                        }
 
-                    match apply_wallpaper_assignment_from_shell(
-                        &addon_id,
-                        &wallpaper_id,
-                        &monitor_ids,
-                        &monitor_indexes,
-                    ) {
-                        Ok(_) => info!(
-                            "[ui] Saved wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?}",
-                            addon_id,
-                            wallpaper_id,
-                            monitor_ids,
-                            monitor_indexes
-                        ),
-                        Err(e) => warn!(
-                            "[ui] Failed saving wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?} error={}",
-                            addon_id,
-                            wallpaper_id,
-                            monitor_ids,
-                            monitor_indexes,
-                            e
-                        ),
+                        let addon_id = message
+                            .addon_id
+                            .unwrap_or_else(|| "sentinel.addon.wallpaper".to_string());
+                        let wallpaper_id = match message.wallpaper_id {
+                            Some(v) if !v.trim().is_empty() => v,
+                            _ => {
+                                warn!("[ui] wallpaper_apply_assignment missing wallpaper_id");
+                                return;
+                            }
+                        };
+                        let monitor_ids = message.monitor_ids.unwrap_or_default();
+                        let monitor_indexes = message.monitor_indexes.unwrap_or_default();
+
+                        match apply_wallpaper_assignment_from_shell(
+                            &addon_id,
+                            &wallpaper_id,
+                            &monitor_ids,
+                            &monitor_indexes,
+                        ) {
+                            Ok(_) => warn!(
+                                "[ui] Saved wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?}",
+                                addon_id,
+                                wallpaper_id,
+                                monitor_ids,
+                                monitor_indexes
+                            ),
+                            Err(e) => warn!(
+                                "[ui] Failed saving wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?} error={}",
+                                addon_id,
+                                wallpaper_id,
+                                monitor_ids,
+                                monitor_indexes,
+                                e
+                            ),
+                        }
+                    });
+
+                    if result.is_err() {
+                        warn!("[ui] Recovered from panic while handling shell IPC message");
                     }
                 })
                 .build(&window)
@@ -442,6 +465,7 @@ fn append_sentinel_data_query(
 ) -> String {
     let payload = serde_json::json!({
         "addonId": addon_id,
+        "hosted": true,
         "wallpaper": wallpaper,
     });
     let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
@@ -779,10 +803,6 @@ fn apply_wallpaper_assignment_from_shell(
     monitor_ids: &[String],
     monitor_indexes: &[String],
 ) -> Result<(), String> {
-    if monitor_ids.is_empty() && monitor_indexes.is_empty() {
-        return Err("No monitor IDs supplied".to_string());
-    }
-
     let addon = discover_addon_configs()
         .into_iter()
         .find(|a| a.id.eq_ignore_ascii_case(addon_id))
@@ -819,8 +839,16 @@ fn apply_wallpaper_assignment_from_shell(
     target_indexes.dedup();
 
     if target_indexes.is_empty() {
-        return Err("No monitor indexes resolved from monitor IDs".to_string());
+        target_indexes.push("*".to_string());
     }
+
+    warn!(
+        "[ui] Applying wallpaper assignment to config='{}' addon='{}' wallpaper='{}' targets={:?}",
+        addon.config_path.display(),
+        addon.id,
+        wallpaper_id,
+        target_indexes
+    );
 
     let content = std::fs::read_to_string(&addon.config_path).unwrap_or_else(|_| "{}".to_string());
     let mut root = serde_yaml::from_str::<Value>(&content).unwrap_or_else(|_| Value::Mapping(Mapping::new()));
@@ -832,19 +860,23 @@ fn apply_wallpaper_assignment_from_shell(
         .as_mapping_mut()
         .ok_or_else(|| "Config root is not a mapping".to_string())?;
 
-    let wallpapers_value = root_map
-        .entry(Value::String("wallpapers".to_string()))
-        .or_insert_with(|| Value::Mapping(Mapping::new()));
-    if !matches!(wallpapers_value, Value::Mapping(_)) {
-        *wallpapers_value = Value::Mapping(Mapping::new());
-    }
-
-    let wallpapers_map = wallpapers_value
-        .as_mapping_mut()
-        .ok_or_else(|| "'wallpapers' is not a mapping".to_string())?;
+    ensure_wallpapers_map(root_map)?;
 
     for target_idx in &target_indexes {
-        upsert_wallpaper_profile_for_index(wallpapers_map, target_idx, wallpaper_id);
+        let updated_nested = {
+            let wallpapers_map = ensure_wallpapers_map(root_map)?;
+            update_wallpaper_profile_for_index(wallpapers_map, target_idx, wallpaper_id)
+        };
+        if updated_nested {
+            continue;
+        }
+
+        if update_wallpaper_profile_for_index(root_map, target_idx, wallpaper_id) {
+            continue;
+        }
+
+        let wallpapers_map = ensure_wallpapers_map(root_map)?;
+        insert_wallpaper_profile_for_index(wallpapers_map, target_idx, wallpaper_id);
     }
 
     let serialized = serde_yaml::to_string(&root)
@@ -855,12 +887,32 @@ fn apply_wallpaper_assignment_from_shell(
     Ok(())
 }
 
-fn upsert_wallpaper_profile_for_index(
+fn ensure_wallpapers_map(root_map: &mut Mapping) -> Result<&mut Mapping, String> {
+    let wallpapers_value = root_map
+        .entry(Value::String("wallpapers".to_string()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    if !matches!(wallpapers_value, Value::Mapping(_)) {
+        *wallpapers_value = Value::Mapping(Mapping::new());
+    }
+
+    wallpapers_value
+        .as_mapping_mut()
+        .ok_or_else(|| "'wallpapers' is not a mapping".to_string())
+}
+
+fn update_wallpaper_profile_for_index(
     wallpapers_map: &mut Mapping,
     monitor_index: &str,
     wallpaper_id: &str,
-) {
-    for (_section_key, section_value) in wallpapers_map.iter_mut() {
+) -> bool {
+    for (section_key, section_value) in wallpapers_map.iter_mut() {
+        let Some(section_name) = section_key.as_str() else {
+            continue;
+        };
+        if !section_name.starts_with("wallpaper") {
+            continue;
+        }
+
         let Some(section_map) = section_value.as_mapping_mut() else {
             continue;
         };
@@ -896,9 +948,18 @@ fn upsert_wallpaper_profile_for_index(
                     Value::String("desktop".to_string()),
                 );
             }
-            return;
+            return true;
         }
     }
+
+    false
+}
+
+fn insert_wallpaper_profile_for_index(
+    wallpapers_map: &mut Mapping,
+    monitor_index: &str,
+    wallpaper_id: &str,
+) {
 
     let mut max_suffix = 0u32;
     for section_key in wallpapers_map.keys() {
@@ -1032,10 +1093,27 @@ fn build_sentinel_custom_tabs_shell_html(
             return false;
         }};
 
+        function normalizeBridgePayload(data) {{
+            if (!data) return null;
+
+            let value = data;
+            if (typeof value === 'string') {{
+                try {{ value = JSON.parse(value); }} catch (_) {{ return null; }}
+            }}
+
+            if (value && typeof value === 'object') {{
+                if (value.sentinelBridge && value.payload) return value.payload;
+                if (value.payload && value.payload.type) return value.payload;
+                if (value.type) return value;
+            }}
+
+            return null;
+        }}
+
         window.addEventListener('message', (event) => {{
-            const data = event && event.data;
-            if (!data || !data.sentinelBridge || !data.payload) return;
-            window.__sentinelBridgePost(data.payload);
+            const payload = normalizeBridgePayload(event && event.data);
+            if (!payload) return;
+            window.__sentinelBridgePost(payload);
         }});
 
         function getAddon() {{
@@ -1092,6 +1170,10 @@ fn build_sentinel_custom_tabs_shell_html(
             renderAddons();
             renderTabs();
         }}
+
+        setTimeout(() => {{
+            window.__sentinelBridgePost({{ type: 'shell_ping' }});
+        }}, 400);
 
         render();
     </script>
