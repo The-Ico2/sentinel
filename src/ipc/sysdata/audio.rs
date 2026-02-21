@@ -3,27 +3,38 @@
 use serde_json::{json, Value};
 use std::{cell::RefCell, collections::VecDeque};
 use windows::Win32::{
+	Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
 	Media::Audio::{
 		eCapture, eConsole, eMultimedia, eRender, IMMDevice, IMMDeviceEnumerator,
 		MMDeviceEnumerator,
 	},
 	Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioMeterInformation},
-	Storage::StructuredStorage::STGM_READ,
-	System::Com::{CoCreateInstance, CoInitializeEx, PropVariantClear, CLSCTX_ALL, COINIT_APARTMENTTHREADED},
-	UI::Shell::PropertiesSystem::PKEY_Device_FriendlyName,
+	System::Com::{
+		StructuredStorage::{PropVariantClear, PropVariantToStringAlloc},
+		CoCreateInstance, CoInitializeEx, CoTaskMemFree, STGM_READ, CLSCTX_ALL,
+		COINIT_APARTMENTTHREADED,
+	},
 };
 
-unsafe fn endpoint_friendly_name(device: &IMMDevice) -> Option<String> {
-	let store = device.OpenPropertyStore(STGM_READ).ok()?;
-	let mut value = store.GetValue(&PKEY_Device_FriendlyName).ok()?;
-	let name = value.Anonymous.Anonymous.Anonymous.pwszVal.to_string().ok()?;
-	let _ = PropVariantClear(&mut value);
-	let trimmed = name.trim().to_string();
-	if trimmed.is_empty() {
-		None
-	} else {
-		Some(trimmed)
+unsafe fn endpoint_display_name(device: &IMMDevice) -> Option<String> {
+	if let Ok(store) = device.OpenPropertyStore(STGM_READ) {
+		if let Ok(mut value) = store.GetValue(&PKEY_Device_FriendlyName) {
+			if let Ok(wide_name) = PropVariantToStringAlloc(&value) {
+				let name = wide_name.to_string().ok().map(|s| s.trim().to_string());
+				CoTaskMemFree(Some(wide_name.0 as _));
+				let _ = PropVariantClear(&mut value);
+				if let Some(display) = name.filter(|s| !s.is_empty()) {
+					return Some(display);
+				}
+			} else {
+				let _ = PropVariantClear(&mut value);
+			}
+		}
 	}
+
+	let id = device.GetId().ok()?.to_string().ok()?;
+	let trimmed = id.trim().to_string();
+	if trimmed.is_empty() { None } else { Some(trimmed) }
 }
 
 thread_local! {
@@ -66,7 +77,7 @@ impl BackendAudioState {
 				.GetDefaultAudioEndpoint(eRender, eMultimedia)
 				.or_else(|_| state.enumerator.GetDefaultAudioEndpoint(eRender, eConsole))
 			{
-				if let Some(name) = endpoint_friendly_name(&output) {
+				if let Some(name) = endpoint_display_name(&output) {
 					state.output_name = name;
 				}
 			}
@@ -76,7 +87,7 @@ impl BackendAudioState {
 				.GetDefaultAudioEndpoint(eCapture, eMultimedia)
 				.or_else(|_| state.enumerator.GetDefaultAudioEndpoint(eCapture, eConsole))
 			{
-				if let Some(name) = endpoint_friendly_name(&input) {
+				if let Some(name) = endpoint_display_name(&input) {
 					state.input_name = name;
 				}
 			}
@@ -97,7 +108,7 @@ impl BackendAudioState {
 				.GetDefaultAudioEndpoint(eRender, eMultimedia)
 				.or_else(|_| self.enumerator.GetDefaultAudioEndpoint(eRender, eConsole))
 			{
-				if let Some(name) = endpoint_friendly_name(&output) {
+				if let Some(name) = endpoint_display_name(&output) {
 					self.output_name = name;
 				}
 				self.output_meter = output.Activate::<IAudioMeterInformation>(CLSCTX_ALL, None).ok();
@@ -109,7 +120,7 @@ impl BackendAudioState {
 				.GetDefaultAudioEndpoint(eCapture, eMultimedia)
 				.or_else(|_| self.enumerator.GetDefaultAudioEndpoint(eCapture, eConsole))
 			{
-				if let Some(name) = endpoint_friendly_name(&input) {
+				if let Some(name) = endpoint_display_name(&input) {
 					self.input_name = name;
 				}
 				self.input_volume = input.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok();
