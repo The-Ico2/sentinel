@@ -235,9 +235,8 @@ impl ActiveWindowManager {
 
         let maximized = IsZoomed(hwnd).0 != 0;
 
-        let (covers_monitor, covers_work) = if rect_ok {
+        let covers_monitor = if rect_ok {
             let monitor_rc = mi_ex.monitorInfo.rcMonitor;
-            let work_rc = mi_ex.monitorInfo.rcWork;
             let epsilon = 1i32;
 
             let monitor_match = (rect.left - monitor_rc.left).abs() <= epsilon
@@ -245,24 +244,19 @@ impl ActiveWindowManager {
                 && (rect.right - monitor_rc.right).abs() <= epsilon
                 && (rect.bottom - monitor_rc.bottom).abs() <= epsilon;
 
-            let work_match = (rect.left - work_rc.left).abs() <= epsilon
-                && (rect.top - work_rc.top).abs() <= epsilon
-                && (rect.right - work_rc.right).abs() <= epsilon
-                && (rect.bottom - work_rc.bottom).abs() <= epsilon;
-
-            (monitor_match, work_match)
+            monitor_match
         } else {
-            (false, false)
+            false
         };
 
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let has_frame = (style & (WS_CAPTION.0 | WS_THICKFRAME.0)) != 0;
 
-        let fullscreen = covers_monitor && (!covers_work || !has_frame);
+        let fullscreen = covers_monitor && !maximized && !has_frame;
 
         let window_state = if fullscreen {
             "fullscreen"
-        } else if maximized || covers_work {
+        } else if maximized {
             "maximized"
         } else {
             "normal"
