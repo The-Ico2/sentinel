@@ -427,8 +427,6 @@ pub fn write_registry_json(reg: &Registry, root: &Path) {
             .get_or_init(|| RwLock::new(Instant::now()))
             .write()
             .unwrap() = Instant::now();
-
-        info!("registry.json updated");
     }
 }
 

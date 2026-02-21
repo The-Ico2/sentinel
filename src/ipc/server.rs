@@ -2,7 +2,7 @@ use std::{thread, time::Duration};
 use serde_json::{from_slice, to_vec};
 use windows::core::PCWSTR;
 use windows::Win32::{
-    Foundation::{HANDLE, INVALID_HANDLE_VALUE, CloseHandle},
+    Foundation::{HANDLE, INVALID_HANDLE_VALUE, CloseHandle, GetLastError, ERROR_PIPE_CONNECTED},
     System::Pipes::*,
     Storage::FileSystem::{ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES},
 };
@@ -49,13 +49,15 @@ pub fn start_ipc_server() {
                 continue;
             }
 
-            info!("Waiting for client connection...");
-            if ConnectNamedPipe(pipe, None).is_ok() {
-                info!("Client connected");
+            let connected = match ConnectNamedPipe(pipe, None) {
+                Ok(_) => true,
+                Err(_) => GetLastError() == ERROR_PIPE_CONNECTED,
+            };
+
+            if connected {
                 handle_client(pipe, &windows);
                 let _ = DisconnectNamedPipe(pipe);
                 let _ = CloseHandle(pipe);
-                info!("Client disconnected and pipe closed");
             } else {
                 warn!("Failed to connect named pipe; closing and retrying in 100ms");
                 let _ = CloseHandle(pipe);
@@ -83,12 +85,8 @@ unsafe fn handle_client(pipe: HANDLE, windows: &WindowsCManager) {
         }
     };
 
-    info!("Received IPC request: ns='{}', cmd='{}'", req.ns, req.cmd);
     let response = match dispatch(&windows, &req.ns, &req.cmd, req.args) {
-        Ok(value) => {
-            info!("IPC request dispatched successfully");
-            IpcResponse::ok(value)
-        }
+        Ok(value) => IpcResponse::ok(value),
         Err(err) => {
             warn!("IPC dispatch error: {}", err);
             IpcResponse::err(err)
@@ -106,7 +104,5 @@ unsafe fn send(pipe: HANDLE, resp: IpcResponse) {
     let mut written = 0u32;
     if WriteFile(pipe, Some(&bytes), Some(&mut written), None).is_err() {
         warn!("Failed to write IPC response");
-    } else {
-        info!("IPC response sent ({} bytes)", written);
     }
 }

@@ -31,9 +31,7 @@ pub fn sentinel_root_dir() -> PathBuf {
     match std::env::current_exe() {
         Ok(path) => {
             if let Some(parent) = path.parent() {
-                let root = parent.to_path_buf();
-                info!("Resolved sentinel root directory: {}", root.display());
-                root
+                parent.to_path_buf()
             } else {
                 warn!("Current executable has no parent, using current directory as sentinel root");
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
