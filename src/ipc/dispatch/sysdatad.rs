@@ -57,6 +57,17 @@ pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
         "get_keyboard" => Ok(metadata_for_category(&reg, "keyboard")),
         "get_mouse" => Ok(metadata_for_category(&reg, "mouse")),
         "get_power" => Ok(metadata_for_category(&reg, "power")),
+        "get_bluetooth" => Ok(metadata_for_category(&reg, "bluetooth")),
+        "get_wifi" => Ok(metadata_for_category(&reg, "wifi")),
+        "get_system" => Ok(metadata_for_category(&reg, "system")),
+        "get_processes" => Ok(metadata_for_category(&reg, "processes")),
+        "get_idle" => Ok(metadata_for_category(&reg, "idle")),
+        "get_notifications" => {
+            Ok(crate::ipc::appdata::notifications::get_notifications_json())
+        }
+        "get_tray_icons" => {
+            Ok(crate::ipc::appdata::trayicons::get_tray_icons_json())
+        }
         _ => Err(format!("Unknown sysdata command: {}", cmd)),
     }
 }

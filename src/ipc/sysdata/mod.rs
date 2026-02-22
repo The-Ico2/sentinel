@@ -11,3 +11,8 @@ pub mod time;
 pub mod keyboard;
 pub mod mouse;
 pub mod power;
+pub mod bluetooth;
+pub mod wifi;
+pub mod system;
+pub mod processes;
+pub mod idle;

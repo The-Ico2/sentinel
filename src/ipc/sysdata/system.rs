@@ -14,7 +14,7 @@ pub fn get_system_json() -> Value {
 	let kernel_version = System::kernel_version().unwrap_or_else(|| "unknown".into());
 	let hostname = System::host_name().unwrap_or_else(|| "unknown".into());
 	let arch = std::env::consts::ARCH;
-	let cpu_arch = System::cpu_arch().unwrap_or_else(|| "unknown".into());
+	let cpu_arch = System::cpu_arch();
 
 	let username = std::env::var("USERNAME").unwrap_or_else(|_| "unknown".into());
 	let computer_name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".into());
