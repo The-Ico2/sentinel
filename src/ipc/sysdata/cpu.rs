@@ -14,6 +14,7 @@ pub fn get_cpu_json() -> Value {
 
 	let cpus = sys.cpus();
 	let logical_cores = cpus.len();
+	let physical_cores = System::physical_core_count().unwrap_or(0);
 
 	let avg_usage = if cpus.is_empty() {
 		0.0
@@ -32,14 +33,45 @@ pub fn get_cpu_json() -> Value {
 		.map(|c| c.brand().to_string())
 		.unwrap_or_else(|| "unknown".to_string());
 
+	let vendor_id = cpus
+		.first()
+		.map(|c| c.vendor_id().to_string())
+		.unwrap_or_else(|| "unknown".to_string());
+
+	let per_core: Vec<Value> = cpus
+		.iter()
+		.enumerate()
+		.map(|(i, c)| {
+			json!({
+				"core_id": i,
+				"usage_percent": c.cpu_usage(),
+				"frequency_mhz": c.frequency(),
+			})
+		})
+		.collect();
+
 	let cpu_temp = get_cpu_temperature_json();
+
+	let uptime_seconds = System::uptime();
+	let boot_time_unix = System::boot_time();
+
+	let process_count = sys.processes().len();
+
+	let arch = std::env::consts::ARCH;
 
 	json!({
 		"brand": brand,
+		"vendor_id": vendor_id,
+		"arch": arch,
 		"logical_cores": logical_cores,
+		"physical_cores": physical_cores,
 		"usage_percent": avg_usage,
 		"frequency_mhz": avg_frequency_mhz,
 		"temperature": cpu_temp,
+		"per_core": per_core,
+		"uptime_seconds": uptime_seconds,
+		"boot_time_unix": boot_time_unix,
+		"process_count": process_count,
 	})
 }
 

@@ -8,3 +8,6 @@ pub mod network;
 pub mod audio;
 pub mod display;
 pub mod time;
+pub mod keyboard;
+pub mod mouse;
+pub mod power;

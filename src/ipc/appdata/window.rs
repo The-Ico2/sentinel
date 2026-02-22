@@ -15,7 +15,7 @@ use windows::{
         Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST},
         UI::WindowsAndMessaging::{
             EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowRect,
-            GetWindowTextLengthW,
+            GetWindowTextLengthW, GetWindowTextW,
             GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed,
             GWL_EXSTYLE, GWL_STYLE, GW_OWNER, WS_CAPTION, WS_EX_TOOLWINDOW, WS_THICKFRAME,
         },
@@ -34,6 +34,8 @@ pub struct ActiveWindowInfo {
     pub app_icon: String,
     pub app_name: String,
     pub exe_path: String,
+    pub window_title: String,
+    pub pid: u32,
     pub window_state: String,
     pub size: WindowSize,
     pub position: WindowPosition,
@@ -201,6 +203,16 @@ impl ActiveWindowManager {
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
 
+        // Get window title
+        let title_len = GetWindowTextLengthW(hwnd);
+        let window_title = if title_len > 0 {
+            let mut buf = vec![0u16; (title_len + 1) as usize];
+            let len = GetWindowTextW(hwnd, &mut buf);
+            String::from_utf16_lossy(&buf[..len as usize])
+        } else {
+            String::new()
+        };
+
         let exe_path = crate::utils::get_process_exe(pid).unwrap_or_else(|_| "".into());
         let friendly_name = crate::utils::get_process_name(pid).unwrap_or_else(|_| "".into());
         let app_name = if !friendly_name.is_empty() && friendly_name != "unknown" {
@@ -273,6 +285,8 @@ impl ActiveWindowManager {
                 app_icon,
                 app_name,
                 exe_path: exe_path.clone(),
+                window_title,
+                pid,
                 window_state,
                 size: WindowSize {
                     width: (rect.right - rect.left).max(0),

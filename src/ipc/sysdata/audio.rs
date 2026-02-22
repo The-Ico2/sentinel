@@ -12,8 +12,16 @@ use windows::Win32::{
 	System::Com::{
 		StructuredStorage::{PropVariantClear, PropVariantToStringAlloc},
 		CoCreateInstance, CoInitializeEx, CoTaskMemFree, STGM_READ, CLSCTX_ALL,
-		COINIT_APARTMENTTHREADED,
+		COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED,
 	},
+};
+use windows::Media::Control::{
+	GlobalSystemMediaTransportControlsSessionManager,
+	GlobalSystemMediaTransportControlsSession,
+	GlobalSystemMediaTransportControlsSessionMediaProperties,
+	GlobalSystemMediaTransportControlsSessionPlaybackInfo,
+	GlobalSystemMediaTransportControlsSessionTimelineProperties,
+	GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
 
 unsafe fn endpoint_display_name(device: &IMMDevice) -> Option<String> {
@@ -256,7 +264,213 @@ pub fn get_audio_json() -> Value {
 				"name": state.input_name.clone(),
 				"volume_percent": (input_volume * 100.0).round(),
 				"muted": input_muted,
-			}
+			},
+			"media_session": get_media_session_json(),
 		})
+	})
+}
+
+/// Query the currently playing media session via WinRT GSMTC API.
+/// Runs in a separate thread to avoid COM apartment conflicts.
+fn get_media_session_json() -> Value {
+	use std::sync::mpsc;
+
+	let (tx, rx) = mpsc::channel();
+	std::thread::spawn(move || {
+		let result = query_media_session();
+		let _ = tx.send(result);
+	});
+
+	match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+		Ok(val) => val,
+		Err(_) => Value::Null,
+	}
+}
+
+fn query_media_session() -> Value {
+	unsafe {
+		let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+	}
+
+	// Block on the async request
+	let manager: GlobalSystemMediaTransportControlsSessionManager = match
+		GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+	{
+		Ok(op) => {
+			// Retry GetResults until the async op completes
+			let mut result = None;
+			for _ in 0..100 {
+				match op.GetResults() {
+					Ok(m) => { result = Some(m); break; }
+					Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+				}
+			}
+			match result {
+				Some(m) => m,
+				None => return Value::Null,
+			}
+		}
+		Err(_) => return Value::Null,
+	};
+
+	let session: GlobalSystemMediaTransportControlsSession = match manager.GetCurrentSession() {
+		Ok(s) => s,
+		Err(_) => return json!({ "playing": false }),
+	};
+
+	let playback_info: Option<GlobalSystemMediaTransportControlsSessionPlaybackInfo> =
+		session.GetPlaybackInfo().ok();
+	let timeline: Option<GlobalSystemMediaTransportControlsSessionTimelineProperties> =
+		session.GetTimelineProperties().ok();
+
+	// Block on media properties async
+	let properties: Option<GlobalSystemMediaTransportControlsSessionMediaProperties> =
+		session.TryGetMediaPropertiesAsync().ok().and_then(|op| {
+			for _ in 0..100 {
+				match op.GetResults() {
+					Ok(r) => return Some(r),
+					Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+				}
+			}
+			None
+		});
+
+	let status = playback_info
+		.as_ref()
+		.and_then(|info| info.PlaybackStatus().ok());
+
+	let status_str = status.map(|s| {
+		if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing {
+			"playing"
+		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused {
+			"paused"
+		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Stopped {
+			"stopped"
+		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Opened {
+			"opened"
+		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed {
+			"closed"
+		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Changing {
+			"changing"
+		} else {
+			"unknown"
+		}
+	});
+
+	let is_playing = status
+		.map(|s| s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
+		.unwrap_or(false);
+
+	let title = properties
+		.as_ref()
+		.and_then(|p| p.Title().ok())
+		.map(|s| s.to_string());
+	let artist = properties
+		.as_ref()
+		.and_then(|p| p.Artist().ok())
+		.map(|s| s.to_string());
+	let album = properties
+		.as_ref()
+		.and_then(|p| p.AlbumTitle().ok())
+		.map(|s| s.to_string());
+	let album_artist = properties
+		.as_ref()
+		.and_then(|p| p.AlbumArtist().ok())
+		.map(|s| s.to_string());
+	let track_number = properties
+		.as_ref()
+		.and_then(|p| p.TrackNumber().ok());
+	let album_track_count = properties
+		.as_ref()
+		.and_then(|p| p.AlbumTrackCount().ok());
+	let genres = properties.as_ref().and_then(|p| {
+		p.Genres().ok().map(|g| {
+			let mut v = Vec::new();
+			if let Ok(size) = g.Size() {
+				for i in 0..size {
+					if let Ok(s) = g.GetAt(i) {
+						v.push(Value::String(s.to_string()));
+					}
+				}
+			}
+			v
+		})
+	});
+	let playback_type = properties
+		.as_ref()
+		.and_then(|p| p.PlaybackType().ok())
+		.and_then(|pt| pt.Value().ok())
+		.map(|v| match v.0 {
+			0 => "unknown",
+			1 => "music",
+			2 => "video",
+			3 => "image",
+			_ => "other",
+		});
+
+	// Source app info
+	let source_app_id = session
+		.SourceAppUserModelId()
+		.ok()
+		.map(|s| s.to_string());
+
+	// Timeline (units are 100-nanosecond intervals)
+	let position_ms = timeline
+		.as_ref()
+		.and_then(|t| t.Position().ok())
+		.map(|d| d.Duration / 10_000);
+	let start_ms = timeline
+		.as_ref()
+		.and_then(|t| t.StartTime().ok())
+		.map(|d| d.Duration / 10_000);
+	let end_ms = timeline
+		.as_ref()
+		.and_then(|t| t.EndTime().ok())
+		.map(|d| d.Duration / 10_000);
+	let duration_ms = end_ms
+		.zip(start_ms)
+		.map(|(e, s)| (e - s).max(0));
+
+	// Playback rate and shuffle/repeat
+	let playback_rate: Option<f64> = playback_info
+		.as_ref()
+		.and_then(|info| info.PlaybackRate().ok())
+		.and_then(|r| r.Value().ok());
+	let is_shuffle: Option<bool> = playback_info
+		.as_ref()
+		.and_then(|info| info.IsShuffleActive().ok())
+		.and_then(|v| v.Value().ok());
+	let auto_repeat = playback_info
+		.as_ref()
+		.and_then(|info| info.AutoRepeatMode().ok())
+		.and_then(|v| v.Value().ok())
+		.map(|v| match v.0 {
+			0 => "none",
+			1 => "track",
+			2 => "list",
+			_ => "unknown",
+		});
+
+	json!({
+		"playing": is_playing,
+		"source_app_id": source_app_id,
+		"title": title,
+		"artist": artist,
+		"album": album,
+		"album_artist": album_artist,
+		"track_number": track_number,
+		"album_track_count": album_track_count,
+		"genres": genres,
+		"playback_type": playback_type,
+		"playback_status": status_str,
+		"playback_rate": playback_rate,
+		"shuffle": is_shuffle,
+		"repeat_mode": auto_repeat,
+		"timeline": {
+			"position_ms": position_ms,
+			"start_ms": start_ms,
+			"end_ms": end_ms,
+			"duration_ms": duration_ms,
+		}
 	})
 }
