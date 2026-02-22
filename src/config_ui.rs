@@ -124,22 +124,10 @@ fn parse_shell_ipc_message(body: &str) -> Option<ShellIpcMessage> {
     }
 
     let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
-    if let Some(as_text) = value.as_str() {
-        if let Ok(direct_text) = serde_json::from_str::<ShellIpcMessage>(as_text) {
-            return Some(direct_text);
-        }
-    }
     let payload = value
         .get("payload")
         .cloned()
         .unwrap_or_else(|| value.clone());
-
-    if let Some(payload_text) = payload.as_str() {
-        if let Ok(from_payload_text) = serde_json::from_str::<ShellIpcMessage>(payload_text) {
-            return Some(from_payload_text);
-        }
-    }
-
     serde_json::from_value::<ShellIpcMessage>(payload).ok()
 }
 
@@ -256,7 +244,8 @@ pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::err
 
     let custom_tab_addons = collect_custom_tab_shell_addons(&addon_catalog);
     if !custom_tab_addons.is_empty() {
-        warn!("[ui] Custom-tab WebView shell is temporarily disabled; using native Addons UI");
+        info!("Launching Sentinel WebView shell for custom addon tabs");
+        return run_sentinel_custom_tabs_shell(custom_tab_addons, addon_focus);
     }
 
     let mut selected = 0usize;
@@ -628,7 +617,6 @@ fn append_sentinel_data_query(
 ) -> String {
     let payload = serde_json::json!({
         "addonId": addon_id,
-        "hosted": true,
         "wallpaper": wallpaper,
     });
     let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
@@ -966,6 +954,10 @@ fn apply_wallpaper_assignment_from_shell(
     monitor_ids: &[String],
     monitor_indexes: &[String],
 ) -> Result<(), String> {
+    if monitor_ids.is_empty() && monitor_indexes.is_empty() {
+        return Err("No monitor IDs supplied".to_string());
+    }
+
     let addon = discover_addon_configs()
         .into_iter()
         .find(|a| a.id.eq_ignore_ascii_case(addon_id))
@@ -1002,16 +994,8 @@ fn apply_wallpaper_assignment_from_shell(
     target_indexes.dedup();
 
     if target_indexes.is_empty() {
-        target_indexes.push("*".to_string());
+        return Err("No monitor indexes resolved from monitor IDs".to_string());
     }
-
-    warn!(
-        "[ui] Applying wallpaper assignment to config='{}' addon='{}' wallpaper='{}' targets={:?}",
-        addon.config_path.display(),
-        addon.id,
-        wallpaper_id,
-        target_indexes
-    );
 
     let content = std::fs::read_to_string(&addon.config_path).unwrap_or_else(|_| "{}".to_string());
     let mut root = serde_yaml::from_str::<Value>(&content).unwrap_or_else(|_| Value::Mapping(Mapping::new()));
@@ -1023,23 +1007,19 @@ fn apply_wallpaper_assignment_from_shell(
         .as_mapping_mut()
         .ok_or_else(|| "Config root is not a mapping".to_string())?;
 
-    ensure_wallpapers_map(root_map)?;
+    let wallpapers_value = root_map
+        .entry(Value::String("wallpapers".to_string()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    if !matches!(wallpapers_value, Value::Mapping(_)) {
+        *wallpapers_value = Value::Mapping(Mapping::new());
+    }
+
+    let wallpapers_map = wallpapers_value
+        .as_mapping_mut()
+        .ok_or_else(|| "'wallpapers' is not a mapping".to_string())?;
 
     for target_idx in &target_indexes {
-        let updated_nested = {
-            let wallpapers_map = ensure_wallpapers_map(root_map)?;
-            update_wallpaper_profile_for_index(wallpapers_map, target_idx, wallpaper_id)
-        };
-        if updated_nested {
-            continue;
-        }
-
-        if update_wallpaper_profile_for_index(root_map, target_idx, wallpaper_id) {
-            continue;
-        }
-
-        let wallpapers_map = ensure_wallpapers_map(root_map)?;
-        insert_wallpaper_profile_for_index(wallpapers_map, target_idx, wallpaper_id);
+        upsert_wallpaper_profile_for_index(wallpapers_map, target_idx, wallpaper_id);
     }
 
     let serialized = serde_yaml::to_string(&root)
@@ -1050,32 +1030,12 @@ fn apply_wallpaper_assignment_from_shell(
     Ok(())
 }
 
-fn ensure_wallpapers_map(root_map: &mut Mapping) -> Result<&mut Mapping, String> {
-    let wallpapers_value = root_map
-        .entry(Value::String("wallpapers".to_string()))
-        .or_insert_with(|| Value::Mapping(Mapping::new()));
-    if !matches!(wallpapers_value, Value::Mapping(_)) {
-        *wallpapers_value = Value::Mapping(Mapping::new());
-    }
-
-    wallpapers_value
-        .as_mapping_mut()
-        .ok_or_else(|| "'wallpapers' is not a mapping".to_string())
-}
-
-fn update_wallpaper_profile_for_index(
+fn upsert_wallpaper_profile_for_index(
     wallpapers_map: &mut Mapping,
     monitor_index: &str,
     wallpaper_id: &str,
-) -> bool {
-    for (section_key, section_value) in wallpapers_map.iter_mut() {
-        let Some(section_name) = section_key.as_str() else {
-            continue;
-        };
-        if !section_name.starts_with("wallpaper") {
-            continue;
-        }
-
+) {
+    for (_section_key, section_value) in wallpapers_map.iter_mut() {
         let Some(section_map) = section_value.as_mapping_mut() else {
             continue;
         };
@@ -1111,18 +1071,9 @@ fn update_wallpaper_profile_for_index(
                     Value::String("desktop".to_string()),
                 );
             }
-            return true;
+            return;
         }
     }
-
-    false
-}
-
-fn insert_wallpaper_profile_for_index(
-    wallpapers_map: &mut Mapping,
-    monitor_index: &str,
-    wallpaper_id: &str,
-) {
 
     let mut max_suffix = 0u32;
     for section_key in wallpapers_map.keys() {
@@ -1261,23 +1212,6 @@ fn build_sentinel_custom_tabs_shell_html(
             return false;
         }};
 
-        function normalizeBridgePayload(data) {{
-            if (!data) return null;
-
-            let value = data;
-            if (typeof value === 'string') {{
-                try {{ value = JSON.parse(value); }} catch (_) {{ return null; }}
-            }}
-
-            if (value && typeof value === 'object') {{
-                if (value.sentinelBridge && value.payload) return value.payload;
-                if (value.payload && value.payload.type) return value.payload;
-                if (value.type) return value;
-            }}
-
-            return null;
-        }}
-
         window.addEventListener('message', (event) => {{
             let data = event && event.data;
             if (!data) return;
@@ -1358,10 +1292,6 @@ fn build_sentinel_custom_tabs_shell_html(
             renderAddons();
             renderTabs();
         }}
-
-        setTimeout(() => {{
-            window.__sentinelBridgePost({{ type: 'shell_ping' }});
-        }}, 400);
 
         render();
     </script>
