@@ -184,6 +184,14 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         ram::get_ram_json,
         storage::get_storage_json,
         time::get_time_json,
+        keyboard::get_keyboard_json,
+        mouse::get_mouse_json,
+        power::get_power_json,
+        bluetooth::get_bluetooth_json,
+        wifi::get_wifi_json,
+        system::get_system_json,
+        processes::get_processes_json,
+        idle::get_idle_json,
     };
     use serde_json::json;
 
@@ -203,7 +211,11 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
                 "y": m.y,
                 "width": m.width,
                 "height": m.height,
-                "scale": m.scale
+                "scale": m.scale,
+                "refresh_rate_hz": m.refresh_rate_hz,
+                "color_depth_bits": m.color_depth_bits,
+                "orientation": m.orientation,
+                "device_name": m.device_name,
             }),
             path: std::path::PathBuf::new(),
             exe_path: "".into(),
@@ -276,6 +288,86 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
         category: "time".into(),
         subtype: "system".into(),
         metadata: get_time_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // Keyboard
+    entries.push(RegistryEntry {
+        id: "keyboard".into(),
+        category: "keyboard".into(),
+        subtype: "system".into(),
+        metadata: get_keyboard_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // Mouse
+    entries.push(RegistryEntry {
+        id: "mouse".into(),
+        category: "mouse".into(),
+        subtype: "system".into(),
+        metadata: get_mouse_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // Power
+    entries.push(RegistryEntry {
+        id: "power".into(),
+        category: "power".into(),
+        subtype: "system".into(),
+        metadata: get_power_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // Bluetooth
+    entries.push(RegistryEntry {
+        id: "bluetooth".into(),
+        category: "bluetooth".into(),
+        subtype: "system".into(),
+        metadata: get_bluetooth_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // WiFi
+    entries.push(RegistryEntry {
+        id: "wifi".into(),
+        category: "wifi".into(),
+        subtype: "system".into(),
+        metadata: get_wifi_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // System
+    entries.push(RegistryEntry {
+        id: "system".into(),
+        category: "system".into(),
+        subtype: "system".into(),
+        metadata: get_system_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // Processes
+    entries.push(RegistryEntry {
+        id: "processes".into(),
+        category: "processes".into(),
+        subtype: "system".into(),
+        metadata: get_processes_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    });
+
+    // Idle
+    entries.push(RegistryEntry {
+        id: "idle".into(),
+        category: "idle".into(),
+        subtype: "system".into(),
+        metadata: get_idle_json(),
         path: std::path::PathBuf::new(),
         exe_path: "".into(),
     });

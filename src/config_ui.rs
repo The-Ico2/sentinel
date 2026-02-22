@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}};
+use std::{borrow::Cow, collections::{HashMap, HashSet}, path::{Path, PathBuf}};
 
 use eframe::{App, NativeOptions, egui};
 use egui::{Color32, RichText, Stroke, TextureHandle, TextureOptions};
@@ -328,7 +328,15 @@ fn run_sentinel_custom_tabs_shell(
         }
         std::fs::write(&shell_path, html)?;
 
-        let shell_url = file_path_to_url(&shell_path)?;
+        // Use sentinel:// custom protocol so shell + iframes are same-origin.
+        // This is critical: WebView2's WebMessageReceived only fires for
+        // top-level frame messages, and file:// iframes silently drop
+        // window.parent.postMessage due to opaque-origin restrictions.
+        // With sentinel:// → http://sentinel.localhost, both frames share
+        // the same origin, so the iframe can directly call
+        // window.parent.__sentinelBridgePost() to relay to Rust.
+        let sentinel_home = sentinel_home_dir()?;
+        let shell_url = file_path_to_sentinel_url(&shell_path, &sentinel_home)?;
         info!("[ui] Launching Sentinel custom-tab shell at {}", shell_url);
 
         let event_loop = EventLoopBuilder::new().build();
@@ -337,13 +345,95 @@ fn run_sentinel_custom_tabs_shell(
                 .build(&event_loop)
                 .map_err(|e| format!("Failed to create Sentinel shell window: {}", e))?;
 
+        let protocol_root = sentinel_home.clone();
         let webview = WebViewBuilder::new()
+                .with_custom_protocol("sentinel".to_string(), move |_webview_id, request| {
+                    let uri = request.uri().to_string();
+                    // Extract path from sentinel://localhost/path or http://sentinel.localhost/path
+                    let raw_path = uri
+                        .strip_prefix("sentinel://localhost")
+                        .or_else(|| uri.strip_prefix("sentinel://"))
+                        .or_else(|| {
+                            // WebView2 workaround: http://sentinel.localhost/path
+                            uri.strip_prefix("http://sentinel.localhost")
+                                .or_else(|| uri.strip_prefix("https://sentinel.localhost"))
+                        })
+                        .unwrap_or(&uri);
+                    let path_part = raw_path.split('?').next().unwrap_or("");
+                    let clean = path_part.trim_start_matches('/');
+                    let decoded = urlencoding::decode(clean).unwrap_or_else(|_| clean.into());
+                    let file_path = protocol_root.join(decoded.replace('/', "\\"));
+
+                    match std::fs::read(&file_path) {
+                        Ok(data) => {
+                            let mime = guess_mime_type(&file_path);
+                            wry::http::Response::builder()
+                                .header("Content-Type", mime)
+                                .header("Access-Control-Allow-Origin", "*")
+                                .body(Cow::Owned(data))
+                                .unwrap()
+                        }
+                        Err(_) => {
+                            wry::http::Response::builder()
+                                .status(404)
+                                .header("Content-Type", "text/plain")
+                                .body(Cow::Borrowed(b"Not Found" as &[u8]))
+                                .unwrap()
+                        }
+                    }
+                })
                 .with_url(&shell_url)
+                .with_initialization_script(
+                    // This runs in ALL frames (main + iframes) on WebView2.
+                    // Because we serve everything through sentinel:// custom
+                    // protocol, the shell and iframes are same-origin.
+                    // Iframes can directly call window.parent.__sentinelBridgePost()
+                    // to relay messages to Rust via the top-level frame's
+                    // window.ipc.postMessage → WebMessageReceived handler.
+                    r#"
+                    (function() {
+                        var isTopFrame;
+                        try { isTopFrame = (window === window.top); } catch(e) { isTopFrame = false; }
+
+                        if (isTopFrame) {
+                            window.__sentinelIPC = function(payload) {
+                                try {
+                                    var msg = (typeof payload === 'string') ? payload : JSON.stringify(payload);
+                                    if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {
+                                        window.chrome.webview.postMessage(msg);
+                                        return true;
+                                    }
+                                    if (window.ipc && typeof window.ipc.postMessage === 'function') {
+                                        window.ipc.postMessage(msg);
+                                        return true;
+                                    }
+                                } catch(e) {}
+                                return false;
+                            };
+                        } else {
+                            // Same-origin: directly call parent's bridge function
+                            window.__sentinelIPC = function(payload) {
+                                try {
+                                    var msg = (typeof payload === 'string') ? payload : JSON.stringify(payload);
+                                    if (window.parent && typeof window.parent.__sentinelBridgePost === 'function') {
+                                        return !!window.parent.__sentinelBridgePost(msg);
+                                    }
+                                    // Fallback: direct top-level ipc if accessible
+                                    if (window.parent && window.parent.ipc && typeof window.parent.ipc.postMessage === 'function') {
+                                        window.parent.ipc.postMessage(msg);
+                                        return true;
+                                    }
+                                } catch(e) {}
+                                return false;
+                            };
+                        }
+                    })();
+                    "#.to_string()
+                )
                 .with_ipc_handler(|request| {
                     let payload = request.body().to_string();
+                    warn!("[ui] IPC handler invoked, payload length={}", payload.len());
                     let result = std::panic::catch_unwind(move || {
-                        warn!("[ui] Shell IPC raw payload: {}", payload);
-
                         let Some(message) = parse_shell_ipc_message(&payload) else {
                             warn!("[ui] Unrecognized shell IPC payload: {}", payload);
                             return;
@@ -360,10 +450,7 @@ fn run_sentinel_custom_tabs_shell(
                             .unwrap_or_else(|| "sentinel.addon.wallpaper".to_string());
                         let wallpaper_id = match message.wallpaper_id {
                             Some(v) if !v.trim().is_empty() => v,
-                            _ => {
-                                warn!("[ui] wallpaper_apply_assignment missing wallpaper_id");
-                                return;
-                            }
+                            _ => return,
                         };
                         let monitor_ids = message.monitor_ids.unwrap_or_default();
                         let monitor_indexes = message.monitor_indexes.unwrap_or_default();
@@ -402,25 +489,102 @@ fn run_sentinel_custom_tabs_shell(
         event_loop.run(move |event, _, control_flow| {
                 let _keep_alive = &webview;
                 *control_flow = ControlFlow::Wait;
-                if let Event::WindowEvent {
-                        event: WindowEvent::CloseRequested,
-                        ..
-                } = event
-                {
-                        *control_flow = ControlFlow::Exit;
+                match &event {
+                    Event::WindowEvent { event: win_event, .. } => {
+                        match win_event {
+                            WindowEvent::CloseRequested => {
+                                warn!("[ui] Shell window CloseRequested — exiting event loop");
+                                *control_flow = ControlFlow::Exit;
+                            }
+                            WindowEvent::Destroyed => {
+                                warn!("[ui] Shell window Destroyed event received");
+                            }
+                            _ => {}
+                        }
+                    }
+                    Event::LoopDestroyed => {
+                        warn!("[ui] Shell event loop destroyed");
+                    }
+                    _ => {}
                 }
         });
 }
 
-fn sentinel_shell_html_path() -> Result<PathBuf, String> {
+fn sentinel_home_dir() -> Result<PathBuf, String> {
         let home = std::env::var("USERPROFILE").map_err(|_| "USERPROFILE not set".to_string())?;
-        Ok(Path::new(&home)
-                .join(".Sentinel")
+        Ok(Path::new(&home).join(".Sentinel"))
+}
+
+fn sentinel_shell_html_path() -> Result<PathBuf, String> {
+        Ok(sentinel_home_dir()?
                 .join("cache")
                 .join("sentinel_custom_tabs_shell.html"))
 }
 
+/// Convert a filesystem path under .Sentinel to a sentinel:// custom protocol URL.
+/// E.g. `C:\Users\Xande\.Sentinel\Addons\wallpaper\options\library.html`
+///    → `sentinel://localhost/Addons/wallpaper/options/library.html`
+fn file_path_to_sentinel_url(path: &Path, sentinel_home: &Path) -> Result<String, String> {
+        let canonical = std::fs::canonicalize(path)
+                .map_err(|e| format!("Failed to resolve path '{}': {}", path.display(), e))?;
+        let home_canonical = std::fs::canonicalize(sentinel_home)
+                .map_err(|e| format!("Failed to resolve home '{}': {}", sentinel_home.display(), e))?;
+
+        let mut canon_str = canonical.to_string_lossy().to_string();
+        let mut home_str = home_canonical.to_string_lossy().to_string();
+        // Strip UNC prefix if present
+        if let Some(stripped) = canon_str.strip_prefix(r"\\?\") {
+                canon_str = stripped.to_string();
+        }
+        if let Some(stripped) = home_str.strip_prefix(r"\\?\") {
+                home_str = stripped.to_string();
+        }
+
+        let relative = canon_str
+                .strip_prefix(&home_str)
+                .ok_or_else(|| format!("Path '{}' is not under sentinel home '{}'", canon_str, home_str))?
+                .trim_start_matches('\\');
+
+        let url_path = relative.replace('\\', "/").replace(' ', "%20");
+        // WebView2 rewrites sentinel://localhost/ to http://sentinel.localhost/
+        // internally. URLs embedded in page content (iframe src, img src, etc.)
+        // must use the rewritten http:// form to be navigable within the page.
+        Ok(format!("http://sentinel.localhost/{}", url_path))
+}
+
+fn guess_mime_type(path: &Path) -> &'static str {
+        match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase().as_str() {
+                "html" | "htm" => "text/html",
+                "css" => "text/css",
+                "js" | "mjs" => "application/javascript",
+                "json" => "application/json",
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "svg" => "image/svg+xml",
+                "ico" => "image/x-icon",
+                "webp" => "image/webp",
+                "woff" => "font/woff",
+                "woff2" => "font/woff2",
+                "ttf" => "font/ttf",
+                "otf" => "font/otf",
+                "mp4" => "video/mp4",
+                "webm" => "video/webm",
+                "mp3" => "audio/mpeg",
+                "ogg" => "audio/ogg",
+                "wav" => "audio/wav",
+                "xml" => "application/xml",
+                "txt" => "text/plain",
+                "yaml" | "yml" => "text/yaml",
+                _ => "application/octet-stream",
+        }
+}
+
 fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellAddon> {
+        let sentinel_home = match sentinel_home_dir() {
+                Ok(h) => h,
+                Err(_) => return Vec::new(),
+        };
         let mut out = Vec::new();
         for addon in catalog {
                 let tabs = discover_custom_tabs(addon);
@@ -428,12 +592,12 @@ fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellA
                         continue;
                 }
 
-        let wallpaper_payload = build_wallpaper_shell_data(addon);
+        let wallpaper_payload = build_wallpaper_shell_data(addon, &sentinel_home);
 
                 let shell_tabs: Vec<CustomTabShellPage> = tabs
                         .into_iter()
                         .filter_map(|t| {
-                file_path_to_url(&t.path).ok().map(|base_url| {
+                file_path_to_sentinel_url(&t.path, &sentinel_home).ok().map(|base_url| {
                     let url = append_sentinel_data_query(&base_url, &addon.id, wallpaper_payload.as_ref());
                     CustomTabShellPage {
                                         id: t.id,
@@ -473,7 +637,7 @@ fn append_sentinel_data_query(
     format!("{}{}sentinelData={}", base_url, sep, encoded)
 }
 
-fn build_wallpaper_shell_data(addon: &AddonMeta) -> Option<WallpaperShellData> {
+fn build_wallpaper_shell_data(addon: &AddonMeta, sentinel_home: &Path) -> Option<WallpaperShellData> {
     let is_wallpaper = addon.package.eq_ignore_ascii_case("wallpaper")
         || addon.id.to_lowercase().contains("wallpaper")
         || addon.name.to_lowercase().contains("wallpaper");
@@ -525,7 +689,7 @@ fn build_wallpaper_shell_data(addon: &AddonMeta) -> Option<WallpaperShellData> {
             let preview_url = asset
                 .preview_paths
                 .first()
-                .and_then(|p| file_path_to_url(p).ok());
+                .and_then(|p| file_path_to_sentinel_url(p, sentinel_home).ok());
 
             WallpaperShellAsset {
                 id: asset.id,
@@ -1081,14 +1245,19 @@ fn build_sentinel_custom_tabs_shell_html(
 
         window.__sentinelBridgePost = (payload) => {{
             if (!payload) return false;
-            if (window.ipc && typeof window.ipc.postMessage === 'function') {{
-                window.ipc.postMessage(JSON.stringify(payload));
-                return true;
-            }}
-            if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {{
-                window.chrome.webview.postMessage(payload);
-                return true;
-            }}
+            var msg = (typeof payload === 'string') ? payload : JSON.stringify(payload);
+            try {{
+                if (window.ipc && typeof window.ipc.postMessage === 'function') {{
+                    window.ipc.postMessage(msg);
+                    return true;
+                }}
+            }} catch (_) {{}}
+            try {{
+                if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {{
+                    window.chrome.webview.postMessage(msg);
+                    return true;
+                }}
+            }} catch (_) {{}}
             return false;
         }};
 
@@ -1110,9 +1279,29 @@ fn build_sentinel_custom_tabs_shell_html(
         }}
 
         window.addEventListener('message', (event) => {{
-            const payload = normalizeBridgePayload(event && event.data);
-            if (!payload) return;
-            window.__sentinelBridgePost(payload);
+            let data = event && event.data;
+            if (!data) return;
+
+            document.title = 'Sentinel [msg:' + (typeof data) + ']';
+
+            if (typeof data === 'string') {{
+                try {{
+                    data = JSON.parse(data);
+                }} catch (_) {{
+                    return;
+                }}
+            }}
+
+            if (data && data.sentinelBridge && data.payload) {{
+                const ok = window.__sentinelBridgePost(data.payload);
+                document.title = 'Sentinel [bridge:' + ok + ']';
+                return;
+            }}
+
+            if (data && data.type) {{
+                const ok = window.__sentinelBridgePost(data);
+                document.title = 'Sentinel [direct:' + ok + ']';
+            }}
         }});
 
         function getAddon() {{

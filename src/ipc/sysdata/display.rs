@@ -24,6 +24,10 @@ pub struct MonitorInfo {
     pub width: i32,
     pub height: i32,
     pub scale: f32,
+    pub refresh_rate_hz: u32,
+    pub color_depth_bits: u32,
+    pub orientation: String,
+    pub device_name: String,
 }
 
 pub struct MonitorManager;
@@ -89,6 +93,16 @@ impl MonitorManager {
                     }
                 }
 
+                let refresh_rate = devmode.dmDisplayFrequency;
+                let color_depth = devmode.dmBitsPerPel;
+                let orientation = match devmode.Anonymous1.Anonymous2.dmDisplayOrientation.0 {
+                    0 => "landscape",
+                    1 => "portrait",
+                    2 => "landscape_flipped",
+                    3 => "portrait_flipped",
+                    _ => "unknown",
+                };
+
                 let derived_scale = (physical_width as f32 / logical_width as f32)
                     .max(physical_height as f32 / logical_height as f32);
                 if derived_scale.is_finite() && derived_scale > 0.0 {
@@ -114,6 +128,10 @@ impl MonitorManager {
                     width: physical_width,
                     height: physical_height,
                     scale,
+                    refresh_rate_hz: refresh_rate,
+                    color_depth_bits: color_depth,
+                    orientation: orientation.to_string(),
+                    device_name: device_name.clone(),
                 });
             }
             BOOL(1)
