@@ -1,8 +1,25 @@
 use serde_json::{Value, json};
 use std::process::{Command, Stdio};
+use sysinfo::System;
 use crate::{info, error};
 use crate::ipc::registry::global_registry;
 use super::utils::registry_entry_to_addon;
+
+/// Check if an addon is already running by matching exe path or process name.
+fn is_addon_running(addon: &crate::Addon) -> bool {
+    let sys = System::new_all();
+    for (_pid, proc_) in sys.processes() {
+        if let Some(exe) = proc_.exe() {
+            if exe == addon.exe_path.as_path() {
+                return true;
+            }
+        }
+        if proc_.name().eq_ignore_ascii_case(&format!("{}.exe", addon.package)) {
+            return true;
+        }
+    }
+    false
+}
 
 pub fn start(args: Option<Value>) -> Result<Value, String> {
     let addon_name = args
@@ -25,6 +42,12 @@ pub fn start(args: Option<Value>) -> Result<Value, String> {
     drop(reg);
 
     let addon = registry_entry_to_addon(&entry)?;
+
+    // Check if addon is already running
+    if is_addon_running(&addon) {
+        info!("[IPC] Addon '{}' is already running, skipping start", addon.name);
+        return Ok(json!({"status": "already_running", "addon": addon_name}));
+    }
 
     info!("Starting addon '{}'", addon.name);
 

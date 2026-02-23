@@ -1,11 +1,11 @@
 // ~/sentinel/sentinel-backend/src/systemtray/systray.rs
 // Responsible for Creating and Managing the Systray (starting/stopping/reloading addons, opening editor, backend control)
 
-use sysinfo::System;
 use std::{
     process::{Child, Command},
     collections::HashMap,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 use tao::{
     event::Event,
@@ -13,15 +13,29 @@ use tao::{
 };
 use tray_icon::{
     menu::MenuEvent,
-    TrayIcon, TrayIconBuilder, TrayIconEvent,
+    TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState,
 };
+#[cfg(target_os = "windows")]
+use tray_icon::menu::ContextMenu;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
+
+#[cfg(target_os = "windows")]
+use windows::{
+    core::BOOL,
+    Win32::{
+        Foundation::{HWND, LPARAM},
+        UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowThreadProcessId, SetForegroundWindow,
+            ShowWindow, IsWindowVisible, SW_RESTORE,
+        },
+    },
+};
 
 use crate::{
     Addon,
     systemtray::{
-        build::build_systray,
+        build::{build_addon_menu, build_backend_menu},
         discover::discover_addons,
     },
     ipc::request::send_ipc_request,
@@ -34,7 +48,6 @@ pub enum MenuAction {
     Stop(String),
     Reload(String),
     OpenConfigUi(String),
-    OpenSentinelUi,
     ToggleAutostart(String),
     ToggleBackendStartup,
     Rescan,
@@ -288,23 +301,83 @@ fn ensure_user_config_dirs() {
     }
 }
 
-// TODO: Actually Use when neccessary
-fn _is_addon_running(addon: &Addon) -> bool {
-    let mut sys = System::new();
-    sys.refresh_all();
-    for (_pid, proc_) in sys.processes() {
-        if let Some(exe) = proc_.exe() {
-            if exe == addon.exe_path {
-                info!("Addon '{}' is running (exe path match)", addon.name);
-                return true;
-            }
+/// Attempt to find and bring to foreground a window belonging to the given PID.
+#[cfg(target_os = "windows")]
+fn focus_process_window(target_pid: u32) -> bool {
+    struct CallbackData {
+        target_pid: u32,
+        found_hwnd: HWND,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let data = &mut *(lparam.0 as *mut CallbackData);
+        let mut proc_id: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut proc_id));
+        if proc_id == data.target_pid && IsWindowVisible(hwnd).as_bool() {
+            data.found_hwnd = hwnd;
+            return BOOL(0); // stop enumeration
         }
-        if proc_.name().eq_ignore_ascii_case(&format!("{}.exe", addon.package)) {
-            info!("Addon '{}' is running (process name match)", addon.name);
+        BOOL(1) // continue
+    }
+
+    let mut data = CallbackData {
+        target_pid,
+        found_hwnd: HWND(std::ptr::null_mut()),
+    };
+    unsafe {
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut data as *mut CallbackData as isize));
+        if !data.found_hwnd.0.is_null() {
+            let _ = ShowWindow(data.found_hwnd, SW_RESTORE);
+            let _ = SetForegroundWindow(data.found_hwnd);
             return true;
         }
     }
     false
+}
+
+/// Open the Sentinel UI or bring the existing instance to focus.
+fn open_or_focus_ui(ui_child: &mut Option<Child>) {
+    // Check if UI is already running
+    if let Some(ref mut child) = ui_child {
+        match child.try_wait() {
+            Ok(None) => {
+                // Still running, bring to focus
+                #[cfg(target_os = "windows")]
+                {
+                    let pid = child.id();
+                    if focus_process_window(pid) {
+                        info!("[ui] Brought existing Sentinel UI to focus");
+                        return;
+                    }
+                    warn!("[ui] UI process running but couldn't find/focus window");
+                }
+                return;
+            }
+            Ok(Some(_)) => {
+                info!("[ui] Previous UI process has exited");
+            }
+            Err(e) => {
+                error!("[ui] Error checking UI process: {}", e);
+            }
+        }
+    }
+
+    // Open new UI
+    match std::env::current_exe() {
+        Ok(exe) => {
+            match Command::new(exe)
+                .arg("--sentinel-ui")
+                .spawn()
+            {
+                Ok(child) => {
+                    info!("[ui] Opened Sentinel UI with PID {}", child.id());
+                    *ui_child = Some(child);
+                }
+                Err(e) => error!("[ui] Failed to open Sentinel UI: {}", e),
+            }
+        }
+        Err(e) => error!("[ui] Failed to resolve backend executable: {}", e),
+    }
 }
 
 fn load_icon(path: &std::path::Path) -> tray_icon::Icon {
@@ -342,7 +415,6 @@ pub fn spawn_tray() {
     }));
 
     let mut addons: Vec<Addon> = Vec::new();
-    let mut children: HashMap<String, Child> = HashMap::new();
     let mut settings = load_tray_settings();
     let mut autostart: HashMap<String, bool> = settings.addon_autostart.clone();
 
@@ -352,26 +424,47 @@ pub fn spawn_tray() {
 
     let mut backend_run_at_startup = settings.run_backend_at_startup;
 
-    let (mut menu, mut id_map) = build_systray(&addons, &autostart, backend_run_at_startup);
-    let mut tray_icon: Option<TrayIcon> = None;
+    // Build two separate menus: addon menu (right-click) and backend menu (double-right-click)
+    let (mut addon_menu, mut addon_id_map) = build_addon_menu(&addons, &autostart);
+    let (mut backend_menu, mut backend_id_map) = build_backend_menu(backend_run_at_startup);
+
+    // Tray icon is created WITHOUT a menu so we can handle right/double-right-click ourselves
+    let mut tray_icon: Option<tray_icon::TrayIcon> = None;
+
+    // UI single-instance tracking
+    let mut ui_child: Option<Child> = None;
+
+    // Debounce state for right-click vs double-right-click
+    let debounce_duration = Duration::from_millis(400);
+    let mut pending_right_click: Option<Instant> = None;
+    let mut double_click_cooldown: Option<Instant> = None;
 
     event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
-
         match event {
             Event::NewEvents(tao::event::StartCause::Init) => {
                 info!("Initializing tray icon");
                 let icon = load_icon(std::path::Path::new(icon_path));
                 tray_icon = Some(
                     TrayIconBuilder::new()
-                        .with_menu(Box::new(menu.clone()))
                         .with_tooltip("Sentinel WDCP")
                         .with_icon(icon)
+                        .with_menu_on_left_click(false)
                         .build()
                         .expect("Failed to build tray icon"),
                 );
                 ensure_user_config_dirs();
 
+                // Attach both menu subclasses to the tray icon's hidden window
+                #[cfg(target_os = "windows")]
+                if let Some(ref ti) = tray_icon {
+                    let hwnd = ti.window_handle() as isize;
+                    unsafe {
+                        addon_menu.attach_menu_subclass_for_hwnd(hwnd);
+                        backend_menu.attach_menu_subclass_for_hwnd(hwnd);
+                    }
+                }
+
+                // Discover addons and rebuild menus
                 addons = discover_addons();
                 info!("Discovered {} addons for tray", addons.len());
                 autostart = addons
@@ -383,28 +476,103 @@ pub fn spawn_tray() {
                     .collect();
                 settings.addon_autostart = autostart.clone();
                 save_tray_settings(&settings);
-                let (new_menu, new_map) = build_systray(&addons, &autostart, backend_run_at_startup);
-                let icon = load_icon(std::path::Path::new(icon_path));
-                tray_icon = Some(
-                    TrayIconBuilder::new()
-                        .with_menu(Box::new(new_menu.clone()))
-                        .with_tooltip("Sentinel WDCP")
-                        .with_icon(icon)
-                        .build()
-                        .expect("Failed to rebuild tray icon after addon discovery"),
-                );
-                menu = new_menu;
-                id_map = new_map;
+
+                // Detach old subclasses, rebuild menus, attach new subclasses
+                #[cfg(target_os = "windows")]
+                if let Some(ref ti) = tray_icon {
+                    let hwnd = ti.window_handle() as isize;
+                    unsafe {
+                        addon_menu.detach_menu_subclass_from_hwnd(hwnd);
+                        backend_menu.detach_menu_subclass_from_hwnd(hwnd);
+                    }
+                }
+
+                let (new_addon, new_addon_ids) = build_addon_menu(&addons, &autostart);
+                let (new_backend, new_backend_ids) = build_backend_menu(backend_run_at_startup);
+
+                #[cfg(target_os = "windows")]
+                if let Some(ref ti) = tray_icon {
+                    let hwnd = ti.window_handle() as isize;
+                    unsafe {
+                        new_addon.attach_menu_subclass_for_hwnd(hwnd);
+                        new_backend.attach_menu_subclass_for_hwnd(hwnd);
+                    }
+                }
+
+                addon_menu = new_addon;
+                addon_id_map = new_addon_ids;
+                backend_menu = new_backend;
+                backend_id_map = new_backend_ids;
             }
 
-            Event::UserEvent(UserEvent::TrayIconEvent(event)) => match event {
-                TrayIconEvent::Click { button, .. } => info!("[tray] Click: {:?}", button),
-                TrayIconEvent::DoubleClick { button, .. } => info!("[tray] DoubleClick: {:?}", button),
-                _ => println!("[tray] Other tray event"),
+            // Debounce timeout: show the addon (right-click) menu
+            Event::NewEvents(tao::event::StartCause::ResumeTimeReached { .. }) => {
+                if pending_right_click.take().is_some() {
+                    #[cfg(target_os = "windows")]
+                    if let Some(ref ti) = tray_icon {
+                        let hwnd = ti.window_handle() as isize;
+                        unsafe {
+                            addon_menu.show_context_menu_for_hwnd(hwnd, None);
+                        }
+                    }
+                }
+            }
+
+            Event::UserEvent(UserEvent::TrayIconEvent(tray_evt)) => match tray_evt {
+                // Single right-click UP: start debounce timer (may become double-right-click)
+                TrayIconEvent::Click {
+                    button: MouseButton::Right,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    // Suppress the right-up that follows a double-right-click
+                    if let Some(cd) = double_click_cooldown {
+                        if cd.elapsed() < Duration::from_millis(600) {
+                            double_click_cooldown = None;
+                            return;
+                        }
+                    }
+                    pending_right_click = Some(Instant::now());
+                }
+
+                // Double LEFT click: open / focus the Sentinel UI
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    info!("[tray] Double-left-click → open/focus Sentinel UI");
+                    open_or_focus_ui(&mut ui_child);
+                }
+
+                // Double RIGHT click: cancel pending single right-click, show backend options menu
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Right,
+                    ..
+                } => {
+                    info!("[tray] Double-right-click → show backend options menu");
+                    pending_right_click = None;
+                    double_click_cooldown = Some(Instant::now());
+
+                    #[cfg(target_os = "windows")]
+                    if let Some(ref ti) = tray_icon {
+                        let hwnd = ti.window_handle() as isize;
+                        unsafe {
+                            backend_menu.show_context_menu_for_hwnd(hwnd, None);
+                        }
+                    }
+                }
+
+                _ => {}
             },
 
             Event::UserEvent(UserEvent::MenuEvent(event)) => {
-                if let Some(action) = id_map.get(&event.id).cloned() {
+                // Look up action in both menu id maps
+                let action = addon_id_map
+                    .get(&event.id)
+                    .or_else(|| backend_id_map.get(&event.id))
+                    .cloned();
+
+                if let Some(action) = action {
                     match action {
                         MenuAction::Start(name) => {
                             let req = crate::ipc::request::IpcRequest {
@@ -459,20 +627,6 @@ pub fn spawn_tray() {
                                 }
                             }
                         }
-                        MenuAction::OpenSentinelUi => {
-                            match std::env::current_exe() {
-                                Ok(exe) => {
-                                    match Command::new(exe)
-                                        .arg("--sentinel-ui")
-                                        .spawn()
-                                    {
-                                        Ok(_) => info!("[ui] Opened Sentinel UI"),
-                                        Err(e) => error!("[ui] Failed to open Sentinel UI: {}", e),
-                                    }
-                                }
-                                Err(e) => error!("[ui] Failed to resolve backend executable for Sentinel UI: {}", e),
-                            }
-                        }
                         MenuAction::ToggleAutostart(name) => {
                             let enabled = {
                                 let entry = autostart.entry(name.clone()).or_insert(false);
@@ -482,18 +636,21 @@ pub fn spawn_tray() {
                             settings.addon_autostart = autostart.clone();
                             save_tray_settings(&settings);
                             info!("[addons] Toggled autostart for '{}': {}", name, enabled);
-                            let (new_menu, new_map) = build_systray(&addons, &autostart, backend_run_at_startup);
-                            let icon = load_icon(std::path::Path::new(icon_path));
-                            tray_icon = Some(
-                                TrayIconBuilder::new()
-                                    .with_menu(Box::new(new_menu.clone()))
-                                    .with_tooltip("Sentinel WDCP")
-                                    .with_icon(icon)
-                                    .build()
-                                    .expect("Failed to rebuild tray icon"),
-                            );
-                            menu = new_menu;
-                            id_map = new_map;
+
+                            // Rebuild addon menu
+                            #[cfg(target_os = "windows")]
+                            if let Some(ref ti) = tray_icon {
+                                let hwnd = ti.window_handle() as isize;
+                                unsafe { addon_menu.detach_menu_subclass_from_hwnd(hwnd); }
+                            }
+                            let (new_addon, new_addon_ids) = build_addon_menu(&addons, &autostart);
+                            #[cfg(target_os = "windows")]
+                            if let Some(ref ti) = tray_icon {
+                                let hwnd = ti.window_handle() as isize;
+                                unsafe { new_addon.attach_menu_subclass_for_hwnd(hwnd); }
+                            }
+                            addon_menu = new_addon;
+                            addon_id_map = new_addon_ids;
                         }
                         MenuAction::ToggleBackendStartup => {
                             let next = !backend_run_at_startup;
@@ -509,18 +666,20 @@ pub fn spawn_tray() {
                                 }
                             }
 
-                            let (new_menu, new_map) = build_systray(&addons, &autostart, backend_run_at_startup);
-                            let icon = load_icon(std::path::Path::new(icon_path));
-                            tray_icon = Some(
-                                TrayIconBuilder::new()
-                                    .with_menu(Box::new(new_menu.clone()))
-                                    .with_tooltip("Sentinel WDCP")
-                                    .with_icon(icon)
-                                    .build()
-                                    .expect("Failed to rebuild tray icon"),
-                            );
-                            menu = new_menu;
-                            id_map = new_map;
+                            // Rebuild backend menu
+                            #[cfg(target_os = "windows")]
+                            if let Some(ref ti) = tray_icon {
+                                let hwnd = ti.window_handle() as isize;
+                                unsafe { backend_menu.detach_menu_subclass_from_hwnd(hwnd); }
+                            }
+                            let (new_backend, new_backend_ids) = build_backend_menu(backend_run_at_startup);
+                            #[cfg(target_os = "windows")]
+                            if let Some(ref ti) = tray_icon {
+                                let hwnd = ti.window_handle() as isize;
+                                unsafe { new_backend.attach_menu_subclass_for_hwnd(hwnd); }
+                            }
+                            backend_menu = new_backend;
+                            backend_id_map = new_backend_ids;
                         }
                         MenuAction::Rescan => {
                             info!("Rescanning addons");
@@ -531,26 +690,33 @@ pub fn spawn_tray() {
                             }).collect();
                             settings.addon_autostart = autostart.clone();
                             save_tray_settings(&settings);
-                            let (new_menu, new_map) = build_systray(&addons, &autostart, backend_run_at_startup);
-                            let icon = load_icon(std::path::Path::new(icon_path));
-                            tray_icon = Some(
-                                TrayIconBuilder::new()
-                                    .with_menu(Box::new(new_menu.clone()))
-                                    .with_tooltip("Sentinel")
-                                    .with_icon(icon)
-                                    .build()
-                                    .expect("Failed to rebuild tray icon"),
-                            );
-                            menu = new_menu;
-                            id_map = new_map;
+
+                            // Rebuild addon menu
+                            #[cfg(target_os = "windows")]
+                            if let Some(ref ti) = tray_icon {
+                                let hwnd = ti.window_handle() as isize;
+                                unsafe { addon_menu.detach_menu_subclass_from_hwnd(hwnd); }
+                            }
+                            let (new_addon, new_addon_ids) = build_addon_menu(&addons, &autostart);
+                            #[cfg(target_os = "windows")]
+                            if let Some(ref ti) = tray_icon {
+                                let hwnd = ti.window_handle() as isize;
+                                unsafe { new_addon.attach_menu_subclass_for_hwnd(hwnd); }
+                            }
+                            addon_menu = new_addon;
+                            addon_id_map = new_addon_ids;
                             info!("Addon menu updated after rescan");
                         }
                         MenuAction::Exit => {
                             info!("Exiting tray, stopping all addons");
-                            for (name, mut child) in children.drain() {
+                            crate::ipc::addon::stop_all();
+
+                            // Kill UI if running
+                            if let Some(ref mut child) = ui_child {
                                 let _ = child.kill();
-                                info!("[addons] Stopped '{}' on exit", name);
+                                info!("[ui] Stopped Sentinel UI on exit");
                             }
+
                             tray_icon.take();
                             *control_flow = ControlFlow::Exit;
                         }
@@ -559,6 +725,16 @@ pub fn spawn_tray() {
             }
 
             _ => {}
+        }
+
+        // Set control flow: use WaitUntil when debouncing, otherwise Wait
+        if *control_flow != ControlFlow::Exit {
+            if let Some(click_time) = pending_right_click {
+                let deadline = click_time + debounce_duration;
+                *control_flow = ControlFlow::WaitUntil(deadline);
+            } else {
+                *control_flow = ControlFlow::Wait;
+            }
         }
     });
 }

@@ -628,6 +628,14 @@ fn output_sysdata(sysdata: &[RegistryEntry]) -> Value {
         "network": category_meta("network"),
         "audio": category_meta("audio"),
         "time": category_meta("time"),
+        "keyboard": category_meta("keyboard"),
+        "mouse": category_meta("mouse"),
+        "power": category_meta("power"),
+        "bluetooth": category_meta("bluetooth"),
+        "wifi": category_meta("wifi"),
+        "system": category_meta("system"),
+        "processes": category_meta("processes"),
+        "idle": category_meta("idle"),
     })
 }
 
@@ -664,6 +672,8 @@ fn output_appdata(appdata: &[RegistryEntry], sysdata: &[RegistryEntry]) -> Value
             "app_name": entry.metadata.get("app_name").and_then(|v| v.as_str()).unwrap_or("unknown"),
             "app_icon": entry.metadata.get("app_icon").and_then(|v| v.as_str()).unwrap_or(""),
             "exe_path": entry.metadata.get("exe_path").and_then(|v| v.as_str()).unwrap_or(""),
+            "window_title": entry.metadata.get("window_title").and_then(|v| v.as_str()).unwrap_or(""),
+            "pid": entry.metadata.get("pid").and_then(|v| v.as_u64()).unwrap_or(0),
             "window_state": entry.metadata.get("window_state").and_then(|v| v.as_str()).unwrap_or("normal"),
             "size": entry.metadata.get("size").cloned().unwrap_or_else(|| serde_json::json!({"width": 0, "height": 0})),
             "position": entry.metadata.get("position").cloned().unwrap_or_else(|| serde_json::json!({"x": 0, "y": 0})),

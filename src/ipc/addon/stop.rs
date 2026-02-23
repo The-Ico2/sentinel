@@ -7,6 +7,50 @@ use crate::{info, error, warn};
 use crate::ipc::registry::global_registry;
 use super::utils::registry_entry_to_addon;
 
+/// Stop ALL running addon processes. Called during backend exit.
+pub fn stop_all() {
+    let reg = global_registry().read().unwrap();
+    let addon_entries: Vec<crate::ipc::registry::RegistryEntry> = reg.addons.clone();
+    drop(reg);
+
+    if addon_entries.is_empty() {
+        info!("[addons] No registered addons to stop");
+        return;
+    }
+
+    let sys = System::new_all();
+
+    for entry in &addon_entries {
+        let addon = match registry_entry_to_addon(entry) {
+            Ok(a) => a,
+            Err(e) => {
+                warn!("[addons] Could not resolve addon '{}' for cleanup: {}", entry.id, e);
+                continue;
+            }
+        };
+
+        for (_pid, proc_) in sys.processes() {
+            let mut matches = false;
+
+            if proc_.exe() == Some(Path::new(&addon.exe_path)) {
+                matches = true;
+            }
+
+            if !matches && proc_.name().eq_ignore_ascii_case(&format!("{}.exe", addon.package)) {
+                matches = true;
+            }
+
+            if matches {
+                match proc_.kill() {
+                    true => info!("[addons] Killed addon process '{}' on exit", addon.name),
+                    false => warn!("[addons] Failed to kill addon process '{}' on exit", addon.name),
+                }
+            }
+        }
+    }
+    info!("[addons] All addon cleanup complete");
+}
+
 pub fn stop(args: Option<Value>) -> Result<Value, String> {
     let addon_name = args
         .as_ref()
