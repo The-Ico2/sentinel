@@ -5,6 +5,7 @@ use crate::warn;
 mod registryd;
 mod sysdatad;
 mod addond;
+mod backendd;
 
 pub fn dispatch(
     _windows: &WindowsCManager, // currently unused, but kept for future commands
@@ -16,6 +17,7 @@ pub fn dispatch(
         "registry" => registryd::dispatch_registry(cmd),
         "sysdata" => sysdatad::dispatch_sysdata(cmd),
         "addon" => addond::dispatch_addon(cmd, args),
+        "backend" => backendd::dispatch_backend(cmd, args),
         _ => {
             warn!("[IPC] Unknown namespace requested: '{}'", ns);
             Err(format!("Unknown namespace: {}", ns))

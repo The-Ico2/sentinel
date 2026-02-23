@@ -49,6 +49,10 @@ thread_local! {
 	static AUDIO_STATE: RefCell<Option<BackendAudioState>> = const { RefCell::new(None) };
 }
 
+/// How many `get_audio_json()` calls between full device re-queries.
+/// At 100 ms poll rate this is roughly every 5 seconds.
+const REFRESH_EVERY_N_CALLS: u32 = 50;
+
 struct BackendAudioState {
 	enumerator: IMMDeviceEnumerator,
 	output_meter: Option<IAudioMeterInformation>,
@@ -59,6 +63,7 @@ struct BackendAudioState {
 	peak_ema: f32,
 	rms_ema: f32,
 	peak_history: VecDeque<f32>,
+	calls_since_refresh: u32,
 }
 
 impl BackendAudioState {
@@ -78,6 +83,7 @@ impl BackendAudioState {
 				peak_ema: 0.0,
 				rms_ema: 0.0,
 				peak_history: VecDeque::with_capacity(64),
+				calls_since_refresh: 0,
 			};
 
 			if let Ok(output) = state
@@ -210,6 +216,13 @@ pub fn get_audio_json() -> Value {
 		}
 
 		if state.output_volume.is_none() && state.input_volume.is_none() {
+			state.refresh();
+		}
+
+		// Periodic full device refresh to detect hot-swapped audio devices
+		state.calls_since_refresh += 1;
+		if state.calls_since_refresh >= REFRESH_EVERY_N_CALLS {
+			state.calls_since_refresh = 0;
 			state.refresh();
 		}
 

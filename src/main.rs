@@ -10,6 +10,7 @@ mod ipc;
 mod systemtray;
 mod utils;
 mod config_ui;
+mod config;
 
 use crate::{
     cli::{run_cli, bootstrap_user_root},
@@ -55,13 +56,18 @@ impl SentinelDaemon {
     pub fn run(&self) {
         info!("Starting SentinelDaemon");
 
+        // Load backend config (config.yaml)
+        info!("Loading backend config");
+        let cfg = crate::config::load_config();
+        info!("Data pull rate: {}ms, paused: {}", cfg.data_pull_rate_ms, cfg.data_pull_paused);
+
         // Start registry manager
         info!("Starting registry manager");
         registry_manager();
 
-        // Start live sysdata/appdata updater (every 100ms)
+        // Start live sysdata/appdata updater
         info!("Starting live data updater");
-        crate::ipc::data_updater::start_registry_updater(Some(100));
+        crate::ipc::data_updater::start_registry_updater();
 
         // Start IPC server in a separate thread
         info!("Spawning IPC server thread");

@@ -4,18 +4,24 @@ use std::{thread, time::Duration};
 use crate::{
     ipc::registry::{global_registry, pull_sysdata, write_registry_json},
     paths::sentinel_root_dir,
+    config::{pull_rate_ms, pull_paused},
 };
 use crate::ipc::{
     appdata::window::ActiveWindowManager,
 };
 
-/// Interval in milliseconds
-const DEFAULT_INTERVAL_MS: u64 = 100;
-
-pub fn start_registry_updater(interval_ms: Option<u64>) {
-    let interval = Duration::from_millis(interval_ms.unwrap_or(DEFAULT_INTERVAL_MS));
-
+/// Start the registry updater thread.
+/// Rate and pause state are read from the global config atomics each iteration.
+pub fn start_registry_updater() {
     thread::spawn(move || loop {
+        // Check pause state
+        if pull_paused() {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+
+        let rate = pull_rate_ms();
+
         // Collect outside lock (can be slow)
         let sysdata = pull_sysdata();
         let appdata = ActiveWindowManager::enumerate_active_windows();
@@ -45,6 +51,8 @@ pub fn start_registry_updater(interval_ms: Option<u64>) {
             write_registry_json(&snapshot, &root);
         }
 
-        thread::sleep(interval);
+        if rate > 0 {
+            thread::sleep(Duration::from_millis(rate));
+        }
     });
 }

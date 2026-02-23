@@ -280,6 +280,9 @@ pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::err
         library_selected_monitor: None,
         selected_custom_tab: None,
         last_opened_custom_tab: None,
+        settings_pull_rate: 100,
+        settings_pull_paused: false,
+        settings_loaded: false,
     };
 
     let options = NativeOptions {
@@ -1158,41 +1161,302 @@ fn build_sentinel_custom_tabs_shell_html(
 
         Ok(format!(
                 r#"<!doctype html>
-<html>
+<html lang="en">
 <head>
-    <meta charset='utf-8' />
-    <meta name='viewport' content='width=device-width, initial-scale=1' />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sentinel</title>
     <style>
-        html, body {{ margin: 0; padding: 0; height: 100%; background: #0d1117; color: #e6edf3; font-family: Segoe UI, sans-serif; }}
-        .shell {{ display: grid; grid-template-columns: 240px 1fr; height: 100%; }}
-        .sidebar {{ border-right: 1px solid #30363d; padding: 12px; box-sizing: border-box; background: #0f141b; }}
-        .brand {{ font-weight: 700; margin-bottom: 10px; }}
-        .addon-btn {{ width: 100%; text-align: left; margin: 4px 0; padding: 8px 10px; border: 1px solid #30363d; background: #111826; color: #e6edf3; border-radius: 6px; cursor: pointer; }}
-        .addon-btn.active {{ background: #1f6feb; border-color: #1f6feb; color: white; }}
-        .main {{ display: grid; grid-template-rows: auto 1fr; min-width: 0; }}
-        .tabs {{ display: flex; gap: 8px; padding: 10px; border-bottom: 1px solid #30363d; background: #0f141b; }}
-        .tab-btn {{ padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d; background: #111826; color: #e6edf3; cursor: pointer; }}
-        .tab-btn.active {{ background: #238636; border-color: #238636; color: white; }}
-        .frame-wrap {{ min-height: 0; }}
-        #tabFrame {{ width: 100%; height: 100%; border: 0; background: #0d1117; }}
+        :root {{
+            --bg-base: #0a0a0f;
+            --bg-surface: #111118;
+            --bg-elevated: #1a1a24;
+            --bg-hover: #22222e;
+            --bg-active: #2a2a38;
+            --border-subtle: rgba(255,255,255,0.06);
+            --border-default: rgba(255,255,255,0.1);
+            --border-strong: rgba(255,255,255,0.15);
+            --text-primary: #e8e8ed;
+            --text-secondary: #8b8b9e;
+            --text-tertiary: #5c5c72;
+            --accent: #dc2626;
+            --accent-hover: #ef4444;
+            --accent-subtle: rgba(220,38,38,0.15);
+            --accent-border: rgba(220,38,38,0.3);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --transition-fast: 150ms cubic-bezier(0.4,0,0.2,1);
+            --sidebar-width: 180px;
+        }}
+        *, *::before, *::after {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        html, body {{ height: 100%; overflow: hidden; }}
+        body {{
+            font-family: "Segoe UI", Inter, -apple-system, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            display: flex;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }}
+        ::-webkit-scrollbar {{ width: 6px; }}
+        ::-webkit-scrollbar-track {{ background: transparent; }}
+        ::-webkit-scrollbar-thumb {{ background: var(--border-default); border-radius: 3px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: var(--border-strong); }}
+
+        @keyframes fadeInUp {{
+            from {{ opacity: 0; transform: translateY(8px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+
+        /* ===== Left Sidebar ===== */
+        #left-vertical-bar {{
+            width: var(--sidebar-width);
+            min-width: var(--sidebar-width);
+            height: 100vh;
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 0;
+            gap: 8px;
+            z-index: 10;
+        }}
+        #logo {{
+            width: 100%;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent);
+            margin-bottom: 4px;
+            position: relative;
+        }}
+        #logo::after {{
+            content: "";
+            position: absolute;
+            bottom: -4px;
+            left: 16px;
+            right: 16px;
+            height: 1px;
+            background: var(--border-subtle);
+        }}
+        #nav-label {{
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-tertiary);
+            padding: 8px 16px 4px;
+        }}
+        #nav-menu {{
+            display: flex;
+            flex-direction: column;
+            padding: 0 8px;
+            gap: 2px;
+        }}
+        #nav-spacer {{ flex: 1; }}
+        .nav-item {{
+            width: 100%;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 0 12px;
+            border: none;
+            border-radius: var(--radius-md);
+            background: none;
+            color: var(--text-tertiary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            position: relative;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            text-align: left;
+        }}
+        .nav-item:hover {{
+            background: var(--bg-hover);
+            color: var(--text-secondary);
+        }}
+        .nav-item.active {{
+            background: var(--accent-subtle);
+            color: var(--accent);
+        }}
+        .nav-item.active::before {{
+            content: "";
+            position: absolute;
+            left: -8px;
+            width: 3px;
+            height: 20px;
+            background: var(--accent);
+            border-radius: 0 3px 3px 0;
+            box-shadow: 0 0 12px rgba(220,38,38,0.4), 0 0 4px rgba(220,38,38,0.6);
+        }}
+        .nav-item svg {{ flex-shrink: 0; }}
+        .nav-item-label {{
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        #nav-bottom {{
+            padding: 0 8px 4px;
+        }}
+        .nav-quick-actions {{
+            display: flex;
+            gap: 6px;
+            padding: 10px 0;
+            border-top: 1px solid var(--border-subtle);
+        }}
+        .quick-action-btn {{
+            flex: 1;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            color: var(--text-tertiary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            position: relative;
+        }}
+        .quick-action-btn:hover {{
+            background: var(--bg-hover);
+            border-color: var(--border-default);
+            color: var(--text-primary);
+        }}
+        .quick-action-btn:active {{ background: var(--bg-active); transform: scale(0.96); }}
+        .quick-action-btn[data-tooltip]:hover::after {{
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            padding: 3px 8px;
+            border-radius: var(--radius-sm);
+            font-size: 11px;
+            font-weight: 500;
+            white-space: nowrap;
+            box-shadow: var(--shadow-md);
+            border: 1px solid var(--border-default);
+            z-index: 100;
+            pointer-events: none;
+        }}
+
+        /* ===== Right Panel ===== */
+        #right-addon-panel {{
+            flex: 1;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg-base);
+        }}
+        .tab-bar {{
+            display: flex;
+            gap: 0;
+            padding: 0 24px;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }}
+        .tab {{
+            padding: 14px 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-tertiary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            border: none;
+            border-bottom: 2px solid transparent;
+            background: none;
+            font-family: inherit;
+        }}
+        .tab:hover {{
+            color: var(--text-secondary);
+            background: var(--bg-hover);
+        }}
+        .tab.active {{
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }}
+        .frame-wrap {{
+            flex: 1;
+            min-height: 0;
+        }}
+        #tabFrame {{
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: var(--bg-base);
+        }}
     </style>
 </head>
 <body>
-    <div class='shell'>
-        <aside class='sidebar'>
-            <div class='brand'>Sentinel</div>
-            <div id='addons'></div>
-        </aside>
-        <main class='main'>
-            <div class='tabs' id='tabs'></div>
-            <div class='frame-wrap'><iframe id='tabFrame' title='Addon Tab'></iframe></div>
-        </main>
+    <div id="left-vertical-bar">
+        <div id="logo">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+        </div>
+        <div id="nav-label">Addons</div>
+        <div id="nav-menu"></div>
+        <div id="nav-spacer"></div>
+        <div id="nav-bottom">
+            <div class="nav-quick-actions">
+                <button class="quick-action-btn" data-tooltip="Home">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                        <polyline points="9 22 9 12 15 12 15 22"/>
+                    </svg>
+                </button>
+                <button class="quick-action-btn" data-tooltip="Settings">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                </button>
+                <button class="quick-action-btn" data-tooltip="Data">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
     </div>
+
+    <div id="right-addon-panel">
+        <div class="tab-bar" id="tabs"></div>
+        <div class="frame-wrap"><iframe id="tabFrame" title="Addon Tab"></iframe></div>
+    </div>
+
     <script>
         const ADDONS = {addons_json};
         let currentAddonId = {selected_json};
         let currentTabId = null;
+
+        const ADDON_ICONS = {{
+            'wallpaper': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+            'statusbar': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>',
+            'window': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+        }};
+
+        const DEFAULT_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>';
+
+        function getAddonIcon(addonId) {{
+            const lower = addonId.toLowerCase();
+            for (const [key, svg] of Object.entries(ADDON_ICONS)) {{
+                if (lower.includes(key)) return svg;
+            }}
+            return DEFAULT_ICON;
+        }}
 
         window.__sentinelBridgePost = (payload) => {{
             if (!payload) return false;
@@ -1216,25 +1480,17 @@ fn build_sentinel_custom_tabs_shell_html(
             let data = event && event.data;
             if (!data) return;
 
-            document.title = 'Sentinel [msg:' + (typeof data) + ']';
-
             if (typeof data === 'string') {{
-                try {{
-                    data = JSON.parse(data);
-                }} catch (_) {{
-                    return;
-                }}
+                try {{ data = JSON.parse(data); }} catch (_) {{ return; }}
             }}
 
             if (data && data.sentinelBridge && data.payload) {{
-                const ok = window.__sentinelBridgePost(data.payload);
-                document.title = 'Sentinel [bridge:' + ok + ']';
+                window.__sentinelBridgePost(data.payload);
                 return;
             }}
 
             if (data && data.type) {{
-                const ok = window.__sentinelBridgePost(data);
-                document.title = 'Sentinel [direct:' + ok + ']';
+                window.__sentinelBridgePost(data);
             }}
         }});
 
@@ -1243,12 +1499,12 @@ fn build_sentinel_custom_tabs_shell_html(
         }}
 
         function renderAddons() {{
-            const host = document.getElementById('addons');
+            const host = document.getElementById('nav-menu');
             host.innerHTML = '';
             ADDONS.forEach(addon => {{
                 const btn = document.createElement('button');
-                btn.className = 'addon-btn' + (addon.id === currentAddonId ? ' active' : '');
-                btn.textContent = addon.name;
+                btn.className = 'nav-item' + (addon.id === currentAddonId ? ' active' : '');
+                btn.innerHTML = getAddonIcon(addon.id) + '<span class="nav-item-label">' + addon.name + '</span>';
                 btn.onclick = () => {{
                     currentAddonId = addon.id;
                     currentTabId = null;
@@ -1275,7 +1531,7 @@ fn build_sentinel_custom_tabs_shell_html(
 
             addon.tabs.forEach(tab => {{
                 const btn = document.createElement('button');
-                btn.className = 'tab-btn' + (tab.id === currentTabId ? ' active' : '');
+                btn.className = 'tab' + (tab.id === currentTabId ? ' active' : '');
                 btn.textContent = tab.title;
                 btn.onclick = () => {{
                     currentTabId = tab.id;
@@ -1313,6 +1569,10 @@ struct SentinelApp {
     library_selected_monitor: Option<String>,
     selected_custom_tab: Option<String>,
     last_opened_custom_tab: Option<String>,
+    // Backend settings state
+    settings_pull_rate: u64,
+    settings_pull_paused: bool,
+    settings_loaded: bool,
 }
 
 impl SentinelApp {
@@ -1399,8 +1659,78 @@ impl SentinelApp {
     }
 
     fn show_settings(&mut self, ui: &mut egui::Ui) {
-        Self::section_card(ui, "Settings", |ui| {
-            ui.label("Reserved for global Sentinel settings and provider preferences.");
+        // Load current values from the backend config on first visit
+        if !self.settings_loaded {
+            let cfg = crate::config::current_config();
+            self.settings_pull_rate = cfg.data_pull_rate_ms;
+            self.settings_pull_paused = cfg.data_pull_paused;
+            self.settings_loaded = true;
+        }
+
+        Self::section_card(ui, "Backend Settings", |ui| {
+            ui.label("Control the Sentinel backend data engine.");
+            ui.add_space(10.0);
+
+            // ── Data pull rate slider ──
+            ui.label(RichText::new("Data Pull Rate").strong());
+            ui.label(
+                RichText::new("How often the backend collects system data and writes the registry (0–5000 ms).")
+                    .small()
+                    .color(Color32::GRAY),
+            );
+            ui.add_space(4.0);
+
+            let rate_before = self.settings_pull_rate;
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.settings_pull_rate, 0..=5000)
+                        .suffix(" ms")
+                        .clamping(egui::SliderClamping::Always),
+                );
+                ui.label(format!("{}ms", self.settings_pull_rate));
+            });
+
+            if self.settings_pull_rate != rate_before {
+                crate::config::set_pull_rate_ms(self.settings_pull_rate);
+                self.global_status = format!("Pull rate → {}ms", self.settings_pull_rate);
+            }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            // ── Pause toggle ──
+            ui.label(RichText::new("Pause Data Pulling").strong());
+            ui.label(
+                RichText::new("While paused the registry will not update. Useful for reducing resource usage.")
+                    .small()
+                    .color(Color32::GRAY),
+            );
+            ui.add_space(4.0);
+
+            let paused_before = self.settings_pull_paused;
+            ui.checkbox(&mut self.settings_pull_paused, "Paused");
+
+            if self.settings_pull_paused != paused_before {
+                crate::config::set_pull_paused(self.settings_pull_paused);
+                self.global_status = if self.settings_pull_paused {
+                    "Data pulling paused".to_string()
+                } else {
+                    "Data pulling resumed".to_string()
+                };
+            }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            // ── Reload from disk button ──
+            if ui.button("Reload config from disk").clicked() {
+                let cfg = crate::config::load_config();
+                self.settings_pull_rate = cfg.data_pull_rate_ms;
+                self.settings_pull_paused = cfg.data_pull_paused;
+                self.global_status = "Reloaded config.yaml".to_string();
+            }
         });
     }
 
