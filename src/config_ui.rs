@@ -14,6 +14,7 @@ use wry::WebViewBuilder;
 
 use crate::{error, info, warn};
 use crate::ipc::sysdata::display::{MonitorInfo, MonitorManager};
+use crate::ipc::registry::global_registry;
 
 #[derive(Clone)]
 struct AddonMeta {
@@ -68,6 +69,9 @@ struct WallpaperShellAsset {
     author_name: Option<String>,
     author_url: Option<String>,
     preview_url: Option<String>,
+    html_url: Option<String>,
+    editable: serde_json::Value,
+    manifest_path: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -79,11 +83,54 @@ struct WallpaperShellData {
     monitor_index: Vec<String>,
     assignments: HashMap<String, String>,
     monitors: Vec<WallpaperShellMonitor>,
-    log_level: Option<String>,
-    tick_sleep_ms: Option<i64>,
-    watcher_enabled: Option<bool>,
-    reapply_on_pause_change: Option<bool>,
     assets: Vec<WallpaperShellAsset>,
+    // settings.development
+    log_level: Option<String>,
+    update_check: Option<bool>,
+    debug: Option<bool>,
+    // settings.runtime
+    tick_sleep_ms: Option<i64>,
+    reapply_on_pause_change: Option<bool>,
+    // settings.performance.pausing
+    pause_focus: Option<String>,
+    pause_maximized: Option<String>,
+    pause_fullscreen: Option<String>,
+    pause_battery: Option<String>,
+    pause_check_interval_ms: Option<i64>,
+    // settings.performance.watcher
+    watcher_enabled: Option<bool>,
+    watcher_interval_ms: Option<i64>,
+    // settings.performance.interactions
+    interactions_send_move: Option<bool>,
+    interactions_send_click: Option<bool>,
+    interactions_poll_interval_ms: Option<i64>,
+    interactions_move_threshold_px: Option<f64>,
+    // settings.performance.audio
+    audio_enabled: Option<bool>,
+    audio_sample_interval_ms: Option<i64>,
+    audio_endpoint_refresh_ms: Option<i64>,
+    audio_retry_interval_ms: Option<i64>,
+    audio_change_threshold: Option<f64>,
+    audio_quantize_decimals: Option<i64>,
+    // settings.diagnostics
+    log_pause_state_changes: Option<bool>,
+    log_watcher_reloads: Option<bool>,
+    // per-monitor profiles
+    profiles: Vec<WallpaperShellProfile>,
+    // metadata
+    addon_version: Option<String>,
+    backend_version: Option<String>,
+    cache_size_bytes: Option<u64>,
+    addon_root_path: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct WallpaperShellProfile {
+    monitor_index: String,
+    enabled: bool,
+    wallpaper_id: String,
+    mode: Option<String>,
+    z_index: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -116,6 +163,15 @@ struct ShellIpcMessage {
     wallpaper_id: Option<String>,
     monitor_ids: Option<Vec<String>>,
     monitor_indexes: Option<Vec<String>>,
+    // For config_update
+    path: Option<String>,
+    value: Option<serde_json::Value>,
+    // For wallpaper_update_property
+    property: Option<String>,
+    // For backend_setting
+    key: Option<String>,
+    // For wallpaper_save_editable / wallpaper_capture_preview
+    manifest_path: Option<String>,
 }
 
 fn parse_shell_ipc_message(body: &str) -> Option<ShellIpcMessage> {
@@ -432,42 +488,84 @@ fn run_sentinel_custom_tabs_shell(
                         };
 
                         warn!("[ui] Shell IPC message kind='{}'", message.kind);
-
-                        if !message.kind.eq_ignore_ascii_case("wallpaper_apply_assignment") {
-                            return;
-                        }
-
                         let addon_id = message
                             .addon_id
+                            .clone()
                             .unwrap_or_else(|| "sentinel.addon.wallpaper".to_string());
-                        let wallpaper_id = match message.wallpaper_id {
-                            Some(v) if !v.trim().is_empty() => v,
-                            _ => return,
-                        };
-                        let monitor_ids = message.monitor_ids.unwrap_or_default();
-                        let monitor_indexes = message.monitor_indexes.unwrap_or_default();
 
-                        match apply_wallpaper_assignment_from_shell(
-                            &addon_id,
-                            &wallpaper_id,
-                            &monitor_ids,
-                            &monitor_indexes,
-                        ) {
-                            Ok(_) => warn!(
-                                "[ui] Saved wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?}",
-                                addon_id,
-                                wallpaper_id,
-                                monitor_ids,
-                                monitor_indexes
-                            ),
-                            Err(e) => warn!(
-                                "[ui] Failed saving wallpaper assignment: addon='{}' wallpaper='{}' monitor_ids={:?} monitor_indexes={:?} error={}",
-                                addon_id,
-                                wallpaper_id,
-                                monitor_ids,
-                                monitor_indexes,
-                                e
-                            ),
+                        match message.kind.to_lowercase().as_str() {
+                            "wallpaper_apply_assignment" => {
+                                let wallpaper_id = match message.wallpaper_id {
+                                    Some(v) if !v.trim().is_empty() => v,
+                                    _ => return,
+                                };
+                                let monitor_ids = message.monitor_ids.unwrap_or_default();
+                                let monitor_indexes = message.monitor_indexes.unwrap_or_default();
+
+                                match apply_wallpaper_assignment_from_shell(
+                                    &addon_id,
+                                    &wallpaper_id,
+                                    &monitor_ids,
+                                    &monitor_indexes,
+                                ) {
+                                    Ok(_) => warn!(
+                                        "[ui] Saved wallpaper assignment: addon='{}' wallpaper='{}' indexes={:?}",
+                                        addon_id, wallpaper_id, monitor_indexes
+                                    ),
+                                    Err(e) => warn!(
+                                        "[ui] Failed saving wallpaper assignment: error={}", e
+                                    ),
+                                }
+                            }
+                            "config_update" => {
+                                let path = message.path.unwrap_or_default();
+                                let value = message.value.unwrap_or(serde_json::Value::Null);
+                                match apply_config_update(&addon_id, &path, &value) {
+                                    Ok(_) => warn!("[ui] Config update: {}={}", path, value),
+                                    Err(e) => warn!("[ui] Config update failed: {}", e),
+                                }
+                            }
+                            "wallpaper_update_property" => {
+                                let monitor_indexes = message.monitor_indexes.unwrap_or_default();
+                                let property = message.property.unwrap_or_default();
+                                let value = message.value.unwrap_or(serde_json::Value::Null);
+                                match apply_wallpaper_property_update(&addon_id, &monitor_indexes, &property, &value) {
+                                    Ok(_) => warn!("[ui] Wallpaper property {}={} for {:?}", property, value, monitor_indexes),
+                                    Err(e) => warn!("[ui] Wallpaper property update failed: {}", e),
+                                }
+                            }
+                            "clear_cache" => {
+                                match clear_addon_cache(&addon_id) {
+                                    Ok(_) => warn!("[ui] Cache cleared for '{}'", addon_id),
+                                    Err(e) => warn!("[ui] Cache clear failed: {}", e),
+                                }
+                            }
+                            "backend_setting" => {
+                                let key = message.key.unwrap_or_default();
+                                let value = message.value.unwrap_or(serde_json::Value::Null);
+                                warn!("[ui] Backend setting update: {}={}", key, value);
+                            }
+                            "wallpaper_save_editable" => {
+                                let wallpaper_id = message.wallpaper_id.unwrap_or_default();
+                                let key = message.key.unwrap_or_default();
+                                let value = message.value.unwrap_or(serde_json::Value::Null);
+                                let manifest_path_str = message.manifest_path.unwrap_or_default();
+                                match save_editable_to_manifest(&manifest_path_str, &key, &value) {
+                                    Ok(_) => warn!("[ui] Editable saved: wp='{}' key='{}' val={}", wallpaper_id, key, value),
+                                    Err(e) => warn!("[ui] Editable save failed: {}", e),
+                                }
+                            }
+                            "wallpaper_capture_preview" => {
+                                let wallpaper_id = message.wallpaper_id.unwrap_or_default();
+                                let manifest_path_str = message.manifest_path.unwrap_or_default();
+                                match capture_wallpaper_preview(&manifest_path_str) {
+                                    Ok(_) => warn!("[ui] Preview captured for '{}'", wallpaper_id),
+                                    Err(e) => warn!("[ui] Preview capture failed: {}", e),
+                                }
+                            }
+                            other => {
+                                warn!("[ui] Unhandled IPC message kind: '{}'", other);
+                            }
                         }
                     });
 
@@ -478,9 +576,48 @@ fn run_sentinel_custom_tabs_shell(
                 .build(&window)
                 .map_err(|e| format!("Failed to create Sentinel shell webview: {}", e))?;
 
+        let mut last_monitor_poll = std::time::Instant::now();
+        let mut cached_monitor_json = String::new();
+        let snapshot_home = sentinel_home.clone();
+
         event_loop.run(move |event, _, control_flow| {
-                let _keep_alive = &webview;
-                *control_flow = ControlFlow::Wait;
+                *control_flow = ControlFlow::WaitUntil(
+                    std::time::Instant::now() + std::time::Duration::from_millis(2000)
+                );
+
+                // Periodic monitor polling for live UI updates
+                if last_monitor_poll.elapsed() >= std::time::Duration::from_millis(2000) {
+                    last_monitor_poll = std::time::Instant::now();
+                    let fresh_monitors: Vec<WallpaperShellMonitor> = MonitorManager::enumerate_monitors()
+                        .into_iter()
+                        .map(|m| WallpaperShellMonitor {
+                            id: m.id,
+                            x: m.x,
+                            y: m.y,
+                            width: m.width,
+                            height: m.height,
+                            scale: m.scale,
+                            primary: m.primary,
+                        })
+                        .collect();
+                    if let Ok(json) = serde_json::to_string(&fresh_monitors) {
+                        if json != cached_monitor_json {
+                            cached_monitor_json = json.clone();
+                            let _ = webview.evaluate_script(&format!(
+                                "if(typeof __sentinelPushMonitors==='function')__sentinelPushMonitors({});",
+                                json
+                            ));
+                        }
+                    }
+
+                    // Write registry snapshot for Data page
+                    if let Ok(reg) = global_registry().read() {
+                        if let Ok(json) = serde_json::to_string_pretty(&*reg) {
+                            let _ = std::fs::write(snapshot_home.join("_sentinel_registry_snapshot.json"), json);
+                        }
+                    }
+                }
+
                 match &event {
                     Event::WindowEvent { event: win_event, .. } => {
                         match win_event {
@@ -682,6 +819,15 @@ fn build_wallpaper_shell_data(addon: &AddonMeta, sentinel_home: &Path) -> Option
                 .first()
                 .and_then(|p| file_path_to_sentinel_url(p, sentinel_home).ok());
 
+            // Resolve the wallpaper's index.html URL
+            let manifest_dir = asset.manifest_path.parent().unwrap_or(Path::new(""));
+            let index_path = manifest_dir.join("index.html");
+            let html_url = if index_path.exists() {
+                file_path_to_sentinel_url(&index_path, sentinel_home).ok()
+            } else {
+                None
+            };
+
             WallpaperShellAsset {
                 id: asset.id,
                 name: asset.name,
@@ -691,9 +837,34 @@ fn build_wallpaper_shell_data(addon: &AddonMeta, sentinel_home: &Path) -> Option
                 author_name,
                 author_url,
                 preview_url,
+                html_url,
+                editable: asset.editable.clone(),
+                manifest_path: asset.manifest_path.to_string_lossy().to_string(),
             }
         })
         .collect::<Vec<_>>();
+
+    let shell_profiles: Vec<WallpaperShellProfile> = profiles.iter().map(|p| {
+        WallpaperShellProfile {
+            monitor_index: p.monitor_index.first().cloned().unwrap_or_else(|| "*".to_string()),
+            enabled: p.enabled,
+            wallpaper_id: p.wallpaper_id.clone(),
+            mode: p.mode.clone(),
+            z_index: p.z_index.clone(),
+        }
+    }).collect();
+
+    // Addon version from addon.json
+    let addon_json_path = addon.addon_root.join("addon.json");
+    let addon_version = std::fs::read_to_string(&addon_json_path).ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("version").and_then(|v| v.as_str().map(|s| s.to_string())));
+
+    let backend_version = Some(env!("CARGO_PKG_VERSION").to_string());
+
+    let cache_dir = addon.addon_root.join("cache");
+    let cache_size_bytes = Some(dir_size(&cache_dir));
+    let addon_root_path = Some(addon.addon_root.to_string_lossy().to_string());
 
     Some(WallpaperShellData {
         enabled: Some(!enabled_profiles.is_empty())
@@ -712,11 +883,45 @@ fn build_wallpaper_shell_data(addon: &AddonMeta, sentinel_home: &Path) -> Option
             .unwrap_or_else(|| yaml_string_list(&config_root, "wallpaper.monitor_index")),
         assignments,
         monitors,
-        log_level: yaml_string(&config_root, "settings.development.log_level"),
-        tick_sleep_ms: yaml_i64(&config_root, "settings.runtime.tick_sleep_ms"),
-        watcher_enabled: yaml_bool(&config_root, "settings.performance.watcher.enabled"),
-        reapply_on_pause_change: yaml_bool(&config_root, "settings.runtime.reapply_on_pause_change"),
         assets,
+        // settings.development
+        log_level: yaml_string(&config_root, "settings.development.log_level"),
+        update_check: yaml_bool(&config_root, "settings.development.update_check"),
+        debug: yaml_bool(&config_root, "settings.development.debug"),
+        // settings.runtime
+        tick_sleep_ms: yaml_i64(&config_root, "settings.runtime.tick_sleep_ms"),
+        reapply_on_pause_change: yaml_bool(&config_root, "settings.runtime.reapply_on_pause_change"),
+        // settings.performance.pausing
+        pause_focus: yaml_string(&config_root, "settings.performance.pausing.focus"),
+        pause_maximized: yaml_string(&config_root, "settings.performance.pausing.maximized"),
+        pause_fullscreen: yaml_string(&config_root, "settings.performance.pausing.fullscreen"),
+        pause_battery: yaml_string(&config_root, "settings.performance.pausing.battery"),
+        pause_check_interval_ms: yaml_i64(&config_root, "settings.performance.pausing.check_interval_ms"),
+        // settings.performance.watcher
+        watcher_enabled: yaml_bool(&config_root, "settings.performance.watcher.enabled"),
+        watcher_interval_ms: yaml_i64(&config_root, "settings.performance.watcher.interval_ms"),
+        // settings.performance.interactions
+        interactions_send_move: yaml_bool(&config_root, "settings.performance.interactions.send_move"),
+        interactions_send_click: yaml_bool(&config_root, "settings.performance.interactions.send_click"),
+        interactions_poll_interval_ms: yaml_i64(&config_root, "settings.performance.interactions.poll_interval_ms"),
+        interactions_move_threshold_px: yaml_f64(&config_root, "settings.performance.interactions.move_threshold_px"),
+        // settings.performance.audio
+        audio_enabled: yaml_bool(&config_root, "settings.performance.audio.enabled"),
+        audio_sample_interval_ms: yaml_i64(&config_root, "settings.performance.audio.sample_interval_ms"),
+        audio_endpoint_refresh_ms: yaml_i64(&config_root, "settings.performance.audio.endpoint_refresh_ms"),
+        audio_retry_interval_ms: yaml_i64(&config_root, "settings.performance.audio.retry_interval_ms"),
+        audio_change_threshold: yaml_f64(&config_root, "settings.performance.audio.change_threshold"),
+        audio_quantize_decimals: yaml_i64(&config_root, "settings.performance.audio.quantize_decimals"),
+        // settings.diagnostics
+        log_pause_state_changes: yaml_bool(&config_root, "settings.diagnostics.log_pause_state_changes"),
+        log_watcher_reloads: yaml_bool(&config_root, "settings.diagnostics.log_watcher_reloads"),
+        // per-monitor profiles
+        profiles: shell_profiles,
+        // metadata
+        addon_version,
+        backend_version,
+        cache_size_bytes,
+        addon_root_path,
     })
 }
 
@@ -1126,6 +1331,10 @@ fn yaml_i64(root: &Value, dotted_path: &str) -> Option<i64> {
     get_node(root, &split_path(dotted_path)).and_then(|v| v.as_i64())
 }
 
+fn yaml_f64(root: &Value, dotted_path: &str) -> Option<f64> {
+    get_node(root, &split_path(dotted_path)).and_then(|v| v.as_f64())
+}
+
 fn yaml_string_list(root: &Value, dotted_path: &str) -> Vec<String> {
     match get_node(root, &split_path(dotted_path)) {
         Some(Value::Sequence(seq)) => seq
@@ -1150,6 +1359,233 @@ fn yaml_string_map(root: &Value, dotted_path: &str) -> HashMap<String, String> {
     }
 
     out
+}
+
+// ── Config update helpers ──
+
+fn dir_size(path: &Path) -> u64 {
+    if !path.exists() { return 0; }
+    walkdir::WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum()
+}
+
+fn json_to_yaml(value: &serde_json::Value) -> Value {
+    serde_yaml::to_value(value).unwrap_or(Value::Null)
+}
+
+fn set_yaml_value(root: &mut Value, path: &str, value: Value) {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut current = root;
+
+    for (i, part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            if let Value::Mapping(map) = current {
+                map.insert(Value::String(part.to_string()), value);
+                return;
+            }
+        } else {
+            if !matches!(current, Value::Mapping(_)) {
+                *current = Value::Mapping(Mapping::new());
+            }
+            let map = current.as_mapping_mut().unwrap();
+            let key = Value::String(part.to_string());
+            if !map.contains_key(&key) {
+                map.insert(key.clone(), Value::Mapping(Mapping::new()));
+            }
+            current = map.get_mut(&key).unwrap();
+        }
+    }
+}
+
+fn apply_config_update(addon_id: &str, path: &str, value: &serde_json::Value) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("Empty config path".to_string());
+    }
+
+    let addon = discover_addon_configs()
+        .into_iter()
+        .find(|a| a.id.eq_ignore_ascii_case(addon_id))
+        .ok_or_else(|| format!("Addon '{}' not found", addon_id))?;
+
+    let content = std::fs::read_to_string(&addon.config_path).unwrap_or_else(|_| "{}".to_string());
+    let mut root = serde_yaml::from_str::<Value>(&content).unwrap_or_else(|_| Value::Mapping(Mapping::new()));
+
+    set_yaml_value(&mut root, path, json_to_yaml(value));
+
+    let serialized = serde_yaml::to_string(&root)
+        .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
+    std::fs::write(&addon.config_path, serialized)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    Ok(())
+}
+
+fn apply_wallpaper_property_update(
+    addon_id: &str,
+    monitor_indexes: &[String],
+    property: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    if property.is_empty() || monitor_indexes.is_empty() {
+        return Err("Missing property or monitor indexes".to_string());
+    }
+
+    let addon = discover_addon_configs()
+        .into_iter()
+        .find(|a| a.id.eq_ignore_ascii_case(addon_id))
+        .ok_or_else(|| format!("Addon '{}' not found", addon_id))?;
+
+    let content = std::fs::read_to_string(&addon.config_path).unwrap_or_else(|_| "{}".to_string());
+    let mut root = serde_yaml::from_str::<Value>(&content).unwrap_or_else(|_| Value::Mapping(Mapping::new()));
+    if !matches!(root, Value::Mapping(_)) {
+        root = Value::Mapping(Mapping::new());
+    }
+
+    let root_map = root.as_mapping_mut().ok_or("Root is not a mapping")?;
+    let wallpapers_value = root_map
+        .entry(Value::String("wallpapers".to_string()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    if !matches!(wallpapers_value, Value::Mapping(_)) {
+        *wallpapers_value = Value::Mapping(Mapping::new());
+    }
+    let wallpapers_map = wallpapers_value.as_mapping_mut().ok_or("wallpapers not a mapping")?;
+
+    let yaml_value = json_to_yaml(value);
+
+    for (_section_key, section_value) in wallpapers_map.iter_mut() {
+        let Some(section_map) = section_value.as_mapping_mut() else { continue };
+
+        let current_indexes = section_map
+            .get(Value::String("monitor_index".to_string()))
+            .and_then(|v| match v {
+                Value::Sequence(seq) => Some(
+                    seq.iter()
+                        .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>(),
+                ),
+                Value::String(s) => Some(vec![s.clone()]),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let matches = current_indexes.iter().any(|idx| monitor_indexes.contains(idx));
+        if !matches { continue; }
+
+        section_map.insert(Value::String(property.to_string()), yaml_value.clone());
+    }
+
+    let serialized = serde_yaml::to_string(&root)
+        .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
+    std::fs::write(&addon.config_path, serialized)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    Ok(())
+}
+
+fn clear_addon_cache(addon_id: &str) -> Result<(), String> {
+    let addon = discover_addon_configs()
+        .into_iter()
+        .find(|a| a.id.eq_ignore_ascii_case(addon_id))
+        .ok_or_else(|| format!("Addon '{}' not found", addon_id))?;
+
+    let cache_dir = addon.addon_root.join("cache");
+    if cache_dir.exists() {
+        std::fs::remove_dir_all(&cache_dir)
+            .map_err(|e| format!("Failed to remove cache: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Save a single editable property back to the wallpaper's manifest.json.
+/// Navigates the "editable" object, finding the key (even inside groups), and updates its "value".
+fn save_editable_to_manifest(manifest_path_str: &str, key: &str, value: &serde_json::Value) -> Result<(), String> {
+    if manifest_path_str.is_empty() || key.is_empty() {
+        return Err("Missing manifest path or key".to_string());
+    }
+    let manifest_path = PathBuf::from(manifest_path_str);
+    if !manifest_path.exists() {
+        return Err(format!("Manifest not found: {}", manifest_path.display()));
+    }
+
+    let text = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("Read manifest: {}", e))?;
+    let mut manifest: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Parse manifest: {}", e))?;
+
+    let editable = manifest
+        .get_mut("editable")
+        .ok_or("No editable section in manifest")?;
+
+    // Try top-level key first
+    if let Some(entry) = editable.get_mut(key) {
+        if entry.is_object() && entry.get("selector").is_some() {
+            entry["value"] = value.clone();
+            let serialized = serde_json::to_string_pretty(&manifest)
+                .map_err(|e| format!("Serialize manifest: {}", e))?;
+            std::fs::write(&manifest_path, serialized)
+                .map_err(|e| format!("Write manifest: {}", e))?;
+            return Ok(());
+        }
+    }
+
+    // Search inside groups
+    let editable_obj = editable.as_object_mut()
+        .ok_or("editable is not an object")?;
+    for (_group_key, group_val) in editable_obj.iter_mut() {
+        if let Some(obj) = group_val.as_object_mut() {
+            if let Some(entry) = obj.get_mut(key) {
+                if entry.is_object() && entry.get("selector").is_some() {
+                    entry["value"] = value.clone();
+                    let serialized = serde_json::to_string_pretty(&manifest)
+                        .map_err(|e| format!("Serialize manifest: {}", e))?;
+                    std::fs::write(&manifest_path, serialized)
+                        .map_err(|e| format!("Write manifest: {}", e))?;
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    Err(format!("Key '{}' not found in editable section", key))
+}
+
+/// Capture a screenshot of the wallpaper for the preview image.
+/// Uses the wallpaper's index.html and captures via a headless approach.
+/// Since WebView screenshot APIs are limited, we copy the existing first preview
+/// or create a placeholder. In a full implementation, this would use a headless
+/// browser or wry's screenshot capability.
+fn capture_wallpaper_preview(manifest_path_str: &str) -> Result<(), String> {
+    if manifest_path_str.is_empty() {
+        return Err("Missing manifest path".to_string());
+    }
+    let manifest_path = PathBuf::from(manifest_path_str);
+    let manifest_dir = manifest_path.parent()
+        .ok_or("Cannot determine manifest directory")?;
+
+    let preview_dir = manifest_dir.join("preview");
+    if !preview_dir.exists() {
+        std::fs::create_dir_all(&preview_dir)
+            .map_err(|e| format!("Failed to create preview dir: {}", e))?;
+    }
+
+    // Use wry's print_to_pdf-like approach or an offscreen capture.
+    // For now we mark that a new preview is needed by writing a sentinel timestamp
+    // so the wallpaper addon's watcher knows to regenerate.
+    let marker_path = preview_dir.join(".preview_capture_pending");
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    std::fs::write(&marker_path, format!("{}", timestamp))
+        .map_err(|e| format!("Failed to write capture marker: {}", e))?;
+
+    warn!("[ui] Preview capture requested for {} — marker written", manifest_path_str);
+    Ok(())
 }
 
 fn build_sentinel_custom_tabs_shell_html(
@@ -1329,6 +1765,7 @@ fn build_sentinel_custom_tabs_shell_html(
             color: var(--text-primary);
         }}
         .quick-action-btn:active {{ background: var(--bg-active); transform: scale(0.96); }}
+        .quick-action-btn.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
         .quick-action-btn[data-tooltip]:hover::after {{
             content: attr(data-tooltip);
             position: absolute;
@@ -1356,6 +1793,175 @@ fn build_sentinel_custom_tabs_shell_html(
             flex-direction: column;
             overflow: hidden;
             background: var(--bg-base);
+        }}
+        #right-page-panel {{
+            flex: 1;
+            height: 100vh;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg-base);
+        }}
+        .page-header {{
+            padding: 20px 28px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-surface);
+            flex-shrink: 0;
+        }}
+        .page-header h2 {{
+            font-size: 18px;
+            font-weight: 600;
+        }}
+        .page-content {{
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 24px 28px;
+        }}
+        .addon-cards-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 16px;
+        }}
+        .addon-card {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }}
+        .addon-card:hover {{
+            border-color: var(--accent-border);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }}
+        .addon-card-icon {{
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-md);
+            background: var(--accent-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent);
+            flex-shrink: 0;
+        }}
+        .addon-card-info h3 {{
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }}
+        .addon-card-info span {{
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }}
+        .page-settings-group {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            margin-bottom: 16px;
+        }}
+        .page-settings-group h3 {{
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }}
+        .setting-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }}
+        .setting-row:last-child {{ border-bottom: none; }}
+        .s-label {{
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }}
+        .s-input {{
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 6px 10px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: inherit;
+            min-width: 100px;
+        }}
+        .s-input:focus {{ outline: none; border-color: var(--accent); }}
+        .s-toggle {{
+            position: relative;
+            width: 36px;
+            height: 20px;
+            display: inline-block;
+        }}
+        .s-toggle input {{ opacity: 0; width: 0; height: 0; }}
+        .s-slider {{
+            position: absolute;
+            inset: 0;
+            background: var(--bg-hover);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background var(--transition-fast);
+        }}
+        .s-slider::before {{
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            transition: transform var(--transition-fast), background var(--transition-fast);
+        }}
+        .s-toggle input:checked + .s-slider {{ background: var(--accent); }}
+        .s-toggle input:checked + .s-slider::before {{ transform: translateX(16px); background: #fff; }}
+        .data-json-wrap {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 16px;
+            overflow: auto;
+            max-height: calc(100vh - 130px);
+        }}
+        .data-json-wrap pre {{
+            font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            white-space: pre-wrap;
+            word-break: break-all;
+        }}
+        .data-filter {{
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }}
+        .data-filter-chip {{
+            padding: 6px 14px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            font-family: inherit;
+        }}
+        .data-filter-chip:hover {{ background: var(--bg-hover); }}
+        .data-filter-chip.active {{
+            background: var(--accent-subtle);
+            color: var(--accent);
+            border-color: var(--accent-border);
         }}
         .tab-bar {{
             display: flex;
@@ -1437,6 +2043,11 @@ fn build_sentinel_custom_tabs_shell_html(
         <div class="frame-wrap"><iframe id="tabFrame" title="Addon Tab"></iframe></div>
     </div>
 
+    <div id="right-page-panel">
+        <div class="page-header" id="page-header"></div>
+        <div class="page-content" id="page-content"></div>
+    </div>
+
     <script>
         const ADDONS = {addons_json};
         let currentAddonId = {selected_json};
@@ -1498,19 +2109,26 @@ fn build_sentinel_custom_tabs_shell_html(
             return ADDONS.find(a => a.id === currentAddonId) || ADDONS[0];
         }}
 
+        let viewMode = 'addon';
+
         function renderAddons() {{
             const host = document.getElementById('nav-menu');
             host.innerHTML = '';
             ADDONS.forEach(addon => {{
                 const btn = document.createElement('button');
-                btn.className = 'nav-item' + (addon.id === currentAddonId ? ' active' : '');
+                btn.className = 'nav-item' + (viewMode === 'addon' && addon.id === currentAddonId ? ' active' : '');
                 btn.innerHTML = getAddonIcon(addon.id) + '<span class="nav-item-label">' + addon.name + '</span>';
                 btn.onclick = () => {{
+                    viewMode = 'addon';
                     currentAddonId = addon.id;
                     currentTabId = null;
                     render();
                 }};
                 host.appendChild(btn);
+            }});
+            document.querySelectorAll('.quick-action-btn').forEach(btn => {{
+                const tip = (btn.getAttribute('data-tooltip') || '').toLowerCase();
+                btn.classList.toggle('active', viewMode === tip);
             }});
         }}
 
@@ -1544,9 +2162,136 @@ fn build_sentinel_custom_tabs_shell_html(
             frame.src = current.url;
         }}
 
+        function renderHomePage() {{
+            const header = document.getElementById('page-header');
+            const content = document.getElementById('page-content');
+            header.innerHTML = '<h2>Dashboard</h2><p style="color:var(--text-dim);margin:4px 0 0;">Installed addons overview</p>';
+            content.innerHTML = '<div class="addon-cards-grid">' + ADDONS.map(addon =>
+                '<div class="addon-card" data-aid="' + addon.id + '">' +
+                    '<div class="addon-card-icon">' + getAddonIcon(addon.id) + '</div>' +
+                    '<div class="addon-card-info">' +
+                        '<h3>' + addon.name + '</h3>' +
+                        '<span>' + addon.id + '</span>' +
+                        '<span>' + addon.tabs.length + ' tab' + (addon.tabs.length !== 1 ? 's' : '') + '</span>' +
+                    '</div>' +
+                '</div>'
+            ).join('') + '</div>';
+            content.querySelectorAll('.addon-card').forEach(card => {{
+                card.onclick = () => {{
+                    viewMode = 'addon';
+                    currentAddonId = card.dataset.aid;
+                    currentTabId = null;
+                    render();
+                }};
+            }});
+        }}
+
+        function renderSettingsPage() {{
+            const header = document.getElementById('page-header');
+            const content = document.getElementById('page-content');
+            header.innerHTML = '<h2>Settings</h2><p style="color:var(--text-dim);margin:4px 0 0;">Backend configuration</p>';
+            content.innerHTML =
+                '<div class="page-settings-group">' +
+                    '<h3>Data Collection</h3>' +
+                    '<div class="setting-row"><span class="s-label">Pull Rate (ms)</span>' +
+                        '<input type="number" id="cfg-pull-rate" class="s-input" value="1000" min="100" max="60000" step="100">' +
+                    '</div>' +
+                    '<div class="setting-row"><span class="s-label">Pause Collection</span>' +
+                        '<label class="s-toggle"><input type="checkbox" id="cfg-pull-paused"><span class="s-slider"></span></label>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="page-settings-group">' +
+                    '<h3>Interface</h3>' +
+                    '<div class="setting-row"><span class="s-label">Theme</span>' +
+                        '<select id="cfg-theme" class="s-input"><option value="dark" selected>Dark</option><option value="light">Light</option></select>' +
+                    '</div>' +
+                '</div>';
+            var rateEl = document.getElementById('cfg-pull-rate');
+            var pauseEl = document.getElementById('cfg-pull-paused');
+            var rateTimer = null;
+            if (rateEl) rateEl.addEventListener('input', function() {{
+                clearTimeout(rateTimer);
+                var v = Number(rateEl.value);
+                rateTimer = setTimeout(function() {{
+                    window.__sentinelBridgePost({{ type: 'backend_setting', key: 'pull_rate', value: v }});
+                }}, 400);
+            }});
+            if (pauseEl) pauseEl.addEventListener('change', function() {{
+                window.__sentinelBridgePost({{ type: 'backend_setting', key: 'pull_paused', value: pauseEl.checked }});
+            }});
+        }}
+
+        function renderDataPage() {{
+            const header = document.getElementById('page-header');
+            const content = document.getElementById('page-content');
+            header.innerHTML = '<h2>Data</h2><p style="color:var(--text-dim);margin:4px 0 0;">Live registry snapshot</p>';
+            var chips = ['All','Addons','System','App'];
+            var activeChip = 'All';
+            content.innerHTML =
+                '<div class="data-filter">' +
+                    chips.map(function(c) {{ return '<button class="data-filter-chip' + (c === activeChip ? ' active' : '') + '">' + c + '</button>'; }}).join('') +
+                '</div>' +
+                '<div class="data-json-wrap"><pre id="data-json-pre">Loading\u2026</pre></div>';
+            content.querySelectorAll('.data-filter-chip').forEach(function(chip) {{
+                chip.onclick = function() {{
+                    activeChip = chip.textContent;
+                    content.querySelectorAll('.data-filter-chip').forEach(function(c) {{ c.classList.toggle('active', c.textContent === activeChip); }});
+                    doFetchRegistry(activeChip);
+                }};
+            }});
+            doFetchRegistry(activeChip);
+        }}
+
+        function doFetchRegistry(filter) {{
+            var pre = document.getElementById('data-json-pre');
+            if (!pre) return;
+            pre.textContent = 'Loading\u2026';
+            fetch('sentinel://localhost/_sentinel_registry_snapshot.json')
+                .then(function(r) {{ return r.ok ? r.json() : Promise.reject('not found'); }})
+                .then(function(data) {{
+                    var subset = data;
+                    if (filter === 'Addons') subset = data.addons || {{}};
+                    else if (filter === 'System') subset = data.sysdata || {{}};
+                    else if (filter === 'App') subset = data.appdata || {{}};
+                    pre.textContent = JSON.stringify(subset, null, 2);
+                }})
+                .catch(function() {{
+                    pre.textContent = JSON.stringify(ADDONS, null, 2);
+                }});
+        }}
+
+        window.__sentinelPushMonitors = function(monitors) {{
+            var frame = document.getElementById('tabFrame');
+            if (frame && frame.contentWindow) {{
+                frame.contentWindow.postMessage({{ type: '__sentinel_monitors', monitors: monitors }}, '*');
+            }}
+        }};
+
+        document.querySelectorAll('.quick-action-btn').forEach(function(btn) {{
+            btn.addEventListener('click', function() {{
+                var tip = (btn.getAttribute('data-tooltip') || '').toLowerCase();
+                if (tip === 'home' || tip === 'settings' || tip === 'data') {{
+                    viewMode = tip;
+                    render();
+                }}
+            }});
+        }});
+
         function render() {{
             renderAddons();
-            renderTabs();
+            var addonPanel = document.getElementById('right-addon-panel');
+            var pagePanel = document.getElementById('right-page-panel');
+            if (viewMode === 'addon') {{
+                addonPanel.style.display = '';
+                pagePanel.style.display = 'none';
+                renderTabs();
+            }} else {{
+                addonPanel.style.display = 'none';
+                pagePanel.style.display = '';
+                if (viewMode === 'home') renderHomePage();
+                else if (viewMode === 'settings') renderSettingsPage();
+                else if (viewMode === 'data') renderDataPage();
+            }}
         }}
 
         render();
