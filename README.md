@@ -105,7 +105,7 @@ Sentinel continuously polls and exposes a wide range of system-level data throug
 ### Hardware & Performance
 
 | Category | IPC Command | Data Provided |
-|----------|-------------|---------------|
+| ---------- | ------------- | --------------- |
 | **CPU** | `get_cpu` | Model, vendor, architecture, physical/logical cores, per-core usage & frequency, temperature, total usage, uptime, boot time, process count |
 | **GPU** | `get_gpu` | Name, vendor, VRAM, temperature, driver version, utilization |
 | **RAM** | `get_ram` | Total/used/free/available memory, swap usage, top 10 processes by memory |
@@ -117,27 +117,27 @@ Sentinel continuously polls and exposes a wide range of system-level data throug
 ### Peripherals & Input
 
 | Category | IPC Command | Data Provided |
-|----------|-------------|---------------|
+| ---------- | ------------- | --------------- |
 | **Keyboard** | `get_keyboard` | Layout ID, type/subtype, function key count, toggle states (Caps/Num/Scroll Lock, Insert) |
 | **Mouse** | `get_mouse` | Cursor position, button count/swap, wheel present, speed, screen dimensions, monitor count |
 
 ### Media & Audio
 
 | Category | IPC Command | Data Provided |
-|----------|-------------|---------------|
+| ---------- | ------------- | --------------- |
 | **Audio** | `get_audio` | Default playback/capture endpoints, volume/mute, all endpoints with levels; active media session (title, artist, album, playback status, timeline position/duration, shuffle, repeat, source app) |
 
 ### Connectivity
 
 | Category | IPC Command | Data Provided |
-|----------|-------------|---------------|
+| ---------- | ------------- | --------------- |
 | **Bluetooth** | `get_bluetooth` | Adapter presence/name/status, paired & connected devices with name, status, class, instance ID |
 | **WiFi** | `get_wifi` | Connected SSID/BSSID, signal strength, radio type, band, channel, auth/cipher, transmit/receive rate, interface list |
 
 ### System & Environment
 
 | Category | IPC Command | Data Provided |
-|----------|-------------|---------------|
+| ---------- | ------------- | --------------- |
 | **System** | `get_system` | OS name/version/kernel/arch, hostname/username/domain, locale (language, region, currency), Windows theme (dark/light, accent color, transparency), BIOS & motherboard info |
 | **Time** | `get_time` | Local & UTC timestamps, timezone, UTC offset, day of year, ISO week, quarter, leap year, uptime, boot time, 12h time with AM/PM |
 | **Processes** | `get_processes` | Top 15 by CPU, top 15 by memory, total process count, status breakdown (running/sleeping/stopped/zombie), aggregate CPU & memory usage |
@@ -151,7 +151,7 @@ Sentinel continuously polls and exposes a wide range of system-level data throug
 Sentinel also tracks active application state, giving addons real-time awareness of what the user is doing on the desktop.
 
 | Category | IPC Command | Data Provided |
-|----------|-------------|---------------|
+| ---------- | ------------- | --------------- |
 | **Active Windows** | via registry | Per-monitor active window: app name, exe path, window title, PID, focused state, window state (normal/maximized/fullscreen), size & position |
 | **Tray Icons** | `get_tray_icons` | System tray notification area icons: process name, PID, exe path, tooltip, visibility, area (visible/overflow) |
 | **Notifications** | `get_notifications` | Recent Windows toast notifications: app name, title, body, timestamp (up to 25) |
