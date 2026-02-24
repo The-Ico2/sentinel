@@ -418,6 +418,7 @@ fn run_sentinel_custom_tabs_shell(
                             wry::http::Response::builder()
                                 .header("Content-Type", mime)
                                 .header("Access-Control-Allow-Origin", "*")
+                                .header("Cache-Control", "no-store, no-cache, must-revalidate")
                                 .body(Cow::Owned(data))
                                 .unwrap()
                         }
