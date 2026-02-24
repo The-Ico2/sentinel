@@ -183,6 +183,9 @@ fn parse_creator_and_id(value: &str) -> (String, String, Option<String>) {
 }
 
 pub fn bootstrap_user_root() {
+    info!("=== Bootstrap starting ===");
+    info!("Current exe: {:?}", std::env::current_exe());
+
     let sentinel = sentinel_root_dir();
 
     // Create the directory structure
@@ -206,21 +209,34 @@ pub fn bootstrap_user_root() {
     let exe_name = current_exe.file_name().unwrap_or_default().to_string_lossy();
     let dst = sentinel.join("sentinelc.exe");
 
+    info!("Source: {}", current_exe.display());
+    info!("Target: {}", dst.display());
+
     // Only copy if the source is newer or different size
     let should_copy = match (fs::metadata(&current_exe), fs::metadata(&dst)) {
         (Ok(src_meta), Ok(dst_meta)) => {
+            let src_size = src_meta.len();
+            let dst_size = dst_meta.len();
             let src_newer = src_meta.modified().ok().zip(dst_meta.modified().ok())
                 .map(|(s, d)| s > d)
                 .unwrap_or(false);
-            src_newer || src_meta.len() != dst_meta.len()
+            info!("Source size={src_size}, Target size={dst_size}, source_newer={src_newer}");
+            src_newer || src_size != dst_size
         }
-        (Ok(_), Err(_)) => true,
-        _ => false,
+        (Ok(src_meta), Err(_)) => {
+            info!("Target does not exist, source size={}", src_meta.len());
+            true
+        }
+        _ => {
+            warn!("Cannot read source exe metadata");
+            false
+        }
     };
 
     if should_copy {
+        info!("Copying exe to sentinel root...");
         match fs::copy(&current_exe, &dst) {
-            Ok(_) => info!("Installed {} -> {}", exe_name, dst.display()),
+            Ok(bytes) => info!("Installed {} ({bytes} bytes) -> {}", exe_name, dst.display()),
             Err(e) => {
                 warn!("Failed to copy exe to sentinel root: {e}");
                 return;
@@ -232,15 +248,13 @@ pub fn bootstrap_user_root() {
 
     // Relaunch from the installed location with the same arguments
     let args: Vec<String> = std::env::args().skip(1).collect();
-    info!("Relaunching from installed location: {}", dst.display());
+    info!("Relaunching from {} with args: {:?}", dst.display(), args);
     match std::process::Command::new(&dst).args(&args).spawn() {
         Ok(_) => {
             info!("Relaunch successful, exiting current process");
             std::process::exit(0);
         }
-        Err(e) => {
-            warn!("Failed to relaunch from installed location: {e}");
-        }
+        Err(e) => warn!("Failed to relaunch from installed location: {e}"),
     }
 }
 
