@@ -27,19 +27,29 @@ pub fn user_home_dir() -> Option<PathBuf> {
     }
 }
 
+/// The canonical Sentinel root is always `~/.Sentinel/`.
+/// All config, addons, and assets live here.
 pub fn sentinel_root_dir() -> PathBuf {
-    match std::env::current_exe() {
-        Ok(path) => {
-            if let Some(parent) = path.parent() {
-                parent.to_path_buf()
-            } else {
-                warn!("Current executable has no parent, using current directory as sentinel root");
+    if let Some(home) = user_home_dir() {
+        home.join(".Sentinel")
+    } else {
+        warn!("Could not resolve home directory, falling back to exe parent");
+        match std::env::current_exe() {
+            Ok(path) => path.parent().map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
+            Err(e) => {
+                warn!("Failed to get current executable path: {e}");
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             }
         }
-        Err(e) => {
-            warn!("Failed to get current executable path: {e}, using current directory as sentinel root");
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        }
+    }
+}
+
+/// Returns true if the currently running exe is inside the sentinel root (`~/.Sentinel/`).
+pub fn is_running_from_sentinel_root() -> bool {
+    let root = sentinel_root_dir();
+    match std::env::current_exe() {
+        Ok(exe) => exe.starts_with(&root),
+        Err(_) => false,
     }
 }

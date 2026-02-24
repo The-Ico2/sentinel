@@ -115,9 +115,8 @@ macro_rules! error {
 
 fn log_path() -> &'static PathBuf {
     LOG_PATH.get_or_init(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("sentinelc.log")))
-            .unwrap_or_else(|| PathBuf::from("sentinelc.log"))
+        let logs_dir = crate::paths::sentinel_root_dir().join("logs");
+        let _ = std::fs::create_dir_all(&logs_dir);
+        logs_dir.join("sentinelc.log")
     })
 }

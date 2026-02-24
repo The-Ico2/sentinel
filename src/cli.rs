@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     io::{self},
 };
-use crate::paths::{user_home_dir, sentinel_root_dir};
+use crate::paths::{user_home_dir, sentinel_root_dir, is_running_from_sentinel_root};
 use crate::{info, warn, error};
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -184,42 +184,62 @@ fn parse_creator_and_id(value: &str) -> (String, String, Option<String>) {
 
 pub fn bootstrap_user_root() {
     let sentinel = sentinel_root_dir();
+
+    // Create the directory structure
     let _ = fs::create_dir_all(&sentinel);
+    let _ = fs::create_dir_all(sentinel.join("Addons"));
     let _ = fs::create_dir_all(sentinel.join("Assets"));
     info!("Bootstrapped user root at {}", sentinel.display());
 
-    let current_dir = match std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
-        Some(p) => p,
-        None => { warn!("Failed to determine current exe dir"); return; }
+    // If already running from ~/.Sentinel/, nothing else to do
+    if is_running_from_sentinel_root() {
+        info!("Already running from sentinel root, skipping self-install");
+        return;
+    }
+
+    // ----- Self-install: copy exe into ~/.Sentinel/ and relaunch -----
+    let current_exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => { warn!("Cannot determine current exe path: {e}"); return; }
     };
-    for exe in ["sentinelc.exe", "sentinel-tray.exe"] {
-        let src = current_dir.join(exe);
-        let dst = sentinel.join(exe);
-            if !src.is_file() {
-                continue;
+
+    let exe_name = current_exe.file_name().unwrap_or_default().to_string_lossy();
+    let dst = sentinel.join("sentinelc.exe");
+
+    // Only copy if the source is newer or different size
+    let should_copy = match (fs::metadata(&current_exe), fs::metadata(&dst)) {
+        (Ok(src_meta), Ok(dst_meta)) => {
+            let src_newer = src_meta.modified().ok().zip(dst_meta.modified().ok())
+                .map(|(s, d)| s > d)
+                .unwrap_or(false);
+            src_newer || src_meta.len() != dst_meta.len()
+        }
+        (Ok(_), Err(_)) => true,
+        _ => false,
+    };
+
+    if should_copy {
+        match fs::copy(&current_exe, &dst) {
+            Ok(_) => info!("Installed {} -> {}", exe_name, dst.display()),
+            Err(e) => {
+                warn!("Failed to copy exe to sentinel root: {e}");
+                return;
             }
+        }
+    } else {
+        info!("Installed exe is already up to date");
+    }
 
-            if src == dst {
-                continue;
-            }
-
-            let should_copy = match (fs::metadata(&src), fs::metadata(&dst)) {
-                (Ok(src_meta), Ok(dst_meta)) => {
-                    let src_newer = src_meta.modified().ok().zip(dst_meta.modified().ok())
-                        .map(|(s, d)| s > d)
-                        .unwrap_or(false);
-                    src_newer || src_meta.len() != dst_meta.len()
-                }
-                (Ok(_), Err(_)) => true,
-                _ => false,
-            };
-
-            if should_copy {
-                if fs::copy(&src, &dst).is_ok() {
-                    info!("Copied {} to {}", src.display(), dst.display());
-                } else {
-                    warn!("Failed to copy {} to {}", src.display(), dst.display());
-                }
+    // Relaunch from the installed location with the same arguments
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    info!("Relaunching from installed location: {}", dst.display());
+    match std::process::Command::new(&dst).args(&args).spawn() {
+        Ok(_) => {
+            info!("Relaunch successful, exiting current process");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            warn!("Failed to relaunch from installed location: {e}");
         }
     }
 }
