@@ -59,6 +59,9 @@ pub fn get_cpu_json() -> Value {
 
 	let arch = std::env::consts::ARCH;
 
+	// Query additional CPU details from WMI (base speed, sockets, virtualization, caches, handles, threads)
+	let cpu_details = query_cpu_details();
+
 	json!({
 		"brand": brand,
 		"vendor_id": vendor_id,
@@ -67,6 +70,15 @@ pub fn get_cpu_json() -> Value {
 		"physical_cores": physical_cores,
 		"usage_percent": avg_usage,
 		"frequency_mhz": avg_frequency_mhz,
+		"base_frequency_mhz": cpu_details.get("base_frequency_mhz").cloned().unwrap_or(Value::Null),
+		"max_frequency_mhz": cpu_details.get("max_frequency_mhz").cloned().unwrap_or(Value::Null),
+		"sockets": cpu_details.get("sockets").cloned().unwrap_or(json!(1)),
+		"virtualization": cpu_details.get("virtualization").cloned().unwrap_or(Value::Null),
+		"l1_cache_kb": cpu_details.get("l1_cache_kb").cloned().unwrap_or(Value::Null),
+		"l2_cache_kb": cpu_details.get("l2_cache_kb").cloned().unwrap_or(Value::Null),
+		"l3_cache_kb": cpu_details.get("l3_cache_kb").cloned().unwrap_or(Value::Null),
+		"thread_count": cpu_details.get("thread_count").cloned().unwrap_or(Value::Null),
+		"handle_count": cpu_details.get("handle_count").cloned().unwrap_or(Value::Null),
 		"temperature": cpu_temp,
 		"per_core": per_core,
 		"uptime_seconds": uptime_seconds,
@@ -231,4 +243,95 @@ if ($samples) {
 	} else {
 		Some(values.iter().sum::<f32>() / values.len() as f32)
 	}
+}
+
+/// Query CPU details not available from sysinfo: base speed, caches, sockets, virtualization, handles.
+fn query_cpu_details() -> Value {
+	let script = r#"$ErrorActionPreference='SilentlyContinue';
+$cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1;
+if ($cpu) {
+	"MaxClockSpeed=$($cpu.MaxClockSpeed)";
+	"NumberOfCores=$($cpu.NumberOfCores)";
+	"NumberOfLogicalProcessors=$($cpu.NumberOfLogicalProcessors)";
+	"SocketDesignation=$($cpu.SocketDesignation)";
+	"L2CacheSize=$($cpu.L2CacheSize)";
+	"L3CacheSize=$($cpu.L3CacheSize)";
+	"VirtualizationFirmwareEnabled=$($cpu.VirtualizationFirmwareEnabled)";
+	"VMMonitorModeExtensions=$($cpu.VMMonitorModeExtensions)";
+	"Manufacturer=$($cpu.Manufacturer)";
+	"Stepping=$($cpu.Stepping)";
+}
+$socketCount = @(Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue).Count;
+if (-not $socketCount) { $socketCount = 1 }
+"Sockets=$socketCount";
+$caches = Get-CimInstance Win32_CacheMemory -ErrorAction SilentlyContinue;
+$totalL1 = 0;
+foreach ($c in $caches) { if ($c.Purpose -match 'L1' -or $c.Level -eq 3) { $totalL1 += $c.MaxCacheSize } }
+if ($totalL1 -gt 0) { "L1Total=$totalL1" }
+$handles = (Get-Process -ErrorAction SilentlyContinue | Measure-Object -Property HandleCount -Sum).Sum;
+"TotalHandles=$handles";
+$threads = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).NumberOfProcesses;
+try { $threads = (Get-Process -ErrorAction SilentlyContinue | Measure-Object -Property Threads -Sum -ErrorAction SilentlyContinue).Sum } catch {};
+if (-not $threads) { $threads = (Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction SilentlyContinue).Threads };
+"TotalThreads=$threads";
+"#;
+
+	let output = Command::new("powershell")
+		.creation_flags(CREATE_NO_WINDOW)
+		.args(["-NoProfile", "-NonInteractive", "-Command", script])
+		.output();
+
+	let Ok(output) = output else { return json!({}) };
+	if !output.status.success() { return json!({}) }
+
+	let text = String::from_utf8_lossy(&output.stdout);
+	let mut max_clock_mhz: Option<u64> = None;
+	let mut sockets: Option<u64> = None;
+	let mut socket_designation: Option<String> = None;
+	let mut l1_total_kb: Option<u64> = None;
+	let mut l2_cache_kb: Option<u64> = None;
+	let mut l3_cache_kb: Option<u64> = None;
+	let mut virt_fw: Option<bool> = None;
+	let mut vm_ext: Option<bool> = None;
+	let mut total_handles: Option<u64> = None;
+	let mut total_threads: Option<u64> = None;
+	let mut manufacturer: Option<String> = None;
+	let mut stepping: Option<String> = None;
+
+	for raw in text.lines() {
+		let line = raw.trim();
+		if let Some(v) = line.strip_prefix("MaxClockSpeed=") { max_clock_mhz = v.trim().parse().ok(); }
+		else if let Some(v) = line.strip_prefix("Sockets=") { sockets = v.trim().parse().ok(); }
+		else if let Some(v) = line.strip_prefix("SocketDesignation=") { socket_designation = Some(v.trim().to_string()); }
+		else if let Some(v) = line.strip_prefix("L1Total=") { l1_total_kb = v.trim().parse().ok(); }
+		else if let Some(v) = line.strip_prefix("L2CacheSize=") { l2_cache_kb = v.trim().parse().ok(); }
+		else if let Some(v) = line.strip_prefix("L3CacheSize=") { l3_cache_kb = v.trim().parse().ok(); }
+		else if let Some(v) = line.strip_prefix("VirtualizationFirmwareEnabled=") { virt_fw = Some(v.trim().eq_ignore_ascii_case("true")); }
+		else if let Some(v) = line.strip_prefix("VMMonitorModeExtensions=") { vm_ext = Some(v.trim().eq_ignore_ascii_case("true")); }
+		else if let Some(v) = line.strip_prefix("TotalHandles=") { total_handles = v.trim().parse().ok(); }
+		else if let Some(v) = line.strip_prefix("TotalThreads=") { total_threads = v.trim().parse().ok(); }
+		else if let Some(v) = line.strip_prefix("Manufacturer=") { manufacturer = Some(v.trim().to_string()); }
+		else if let Some(v) = line.strip_prefix("Stepping=") { stepping = Some(v.trim().to_string()); }
+	}
+
+	let virtualization = match (virt_fw, vm_ext) {
+		(Some(true), _) | (_, Some(true)) => json!("Enabled"),
+		(Some(false), _) => json!("Disabled"),
+		_ => Value::Null,
+	};
+
+	json!({
+		"base_frequency_mhz": max_clock_mhz,
+		"max_frequency_mhz": max_clock_mhz,
+		"sockets": sockets.unwrap_or(1),
+		"socket_designation": socket_designation,
+		"l1_cache_kb": l1_total_kb,
+		"l2_cache_kb": l2_cache_kb,
+		"l3_cache_kb": l3_cache_kb,
+		"virtualization": virtualization,
+		"handle_count": total_handles,
+		"thread_count": total_threads,
+		"manufacturer": manufacturer,
+		"stepping": stepping,
+	})
 }

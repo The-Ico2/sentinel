@@ -28,10 +28,22 @@ pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
                     "width": m.width,
                     "height": m.height,
                     "scale": m.scale,
+                    "dpi": m.dpi,
                     "refresh_rate_hz": m.refresh_rate_hz,
                     "color_depth_bits": m.color_depth_bits,
+                    "bits_per_channel": m.bits_per_channel,
                     "orientation": m.orientation,
+                    "aspect_ratio": m.aspect_ratio,
                     "device_name": m.device_name,
+                    "monitor_name": m.monitor_name,
+                    "connection_type": m.connection_type,
+                    "hdr_supported": m.hdr_supported,
+                    "physical_width_mm": m.physical_width_mm,
+                    "physical_height_mm": m.physical_height_mm,
+                    "manufacturer": m.manufacturer,
+                    "product_code": m.product_code,
+                    "serial_number": m.serial_number,
+                    "year_of_manufacture": m.year_of_manufacture,
                 })
             }).collect();
 

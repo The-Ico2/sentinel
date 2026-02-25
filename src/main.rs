@@ -59,7 +59,8 @@ impl SentinelDaemon {
         // Load backend config (config.yaml)
         info!("Loading backend config");
         let cfg = crate::config::load_config();
-        info!("Data pull rate: {}ms, paused: {}", cfg.data_pull_rate_ms, cfg.data_pull_paused);
+        info!("Data pull rates: fast={}ms slow={}ms, paused: {}, refresh_on_request: {}",
+            cfg.fast_pull_rate_ms, cfg.slow_pull_rate_ms, cfg.data_pull_paused, cfg.refresh_on_request);
 
         // Start registry manager
         info!("Starting registry manager");

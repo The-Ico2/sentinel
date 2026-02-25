@@ -2,7 +2,11 @@
 
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::{Mutex, OnceLock}, time::Instant};
+use std::os::windows::process::CommandExt;
+use std::process::Command;
 use sysinfo::Networks;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Default)]
 struct NetworkSnapshot {
@@ -10,9 +14,94 @@ struct NetworkSnapshot {
 	last_tick: Option<Instant>,
 }
 
+/// Query Get-NetAdapter for hardware details (description, link speed, media type, status)
+fn query_adapter_details() -> HashMap<String, Value> {
+	let script = r#"$ErrorActionPreference='SilentlyContinue';
+$adapters = Get-NetAdapter | Where-Object { $_.Status -ne 'Not Present' };
+foreach ($a in $adapters) {
+	"Name=$($a.Name)";
+	"InterfaceDescription=$($a.InterfaceDescription)";
+	"Status=$($a.Status)";
+	"LinkSpeed=$($a.LinkSpeed)";
+	"MediaType=$($a.MediaType)";
+	"MacAddress=$($a.MacAddress)";
+	"InterfaceIndex=$($a.InterfaceIndex)";
+	"MediaConnectionState=$($a.MediaConnectionState)";
+	"DriverVersion=$($a.DriverVersionString)";
+	"DriverProvider=$($a.DriverProvider)";
+	"";
+}
+"#;
+
+	let output = Command::new("powershell")
+		.creation_flags(CREATE_NO_WINDOW)
+		.args(["-NoProfile", "-NonInteractive", "-Command", script])
+		.output();
+
+	let Ok(output) = output else { return HashMap::new() };
+	if !output.status.success() { return HashMap::new() }
+
+	let text = String::from_utf8_lossy(&output.stdout);
+	let mut result = HashMap::<String, Value>::new();
+	let mut fields = HashMap::<String, String>::new();
+
+	for raw in text.lines() {
+		let line = raw.trim();
+		if line.is_empty() {
+			if let Some(name) = fields.get("Name").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+				let desc = fields.get("InterfaceDescription").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+				let link_speed = fields.get("LinkSpeed").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+				let media_type = fields.get("MediaType").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+				let status = fields.get("Status").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+				let conn_state = fields.get("MediaConnectionState").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+				let driver_ver = fields.get("DriverVersion").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+				let driver_prov = fields.get("DriverProvider").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+				result.insert(name, json!({
+					"description": desc,
+					"link_speed": link_speed,
+					"media_type": media_type,
+					"status": status,
+					"media_connection_state": conn_state,
+					"driver_version": driver_ver,
+					"driver_provider": driver_prov,
+				}));
+			}
+			fields.clear();
+			continue;
+		}
+		if let Some((key, val)) = line.split_once('=') {
+			fields.insert(key.trim().to_string(), val.to_string());
+		}
+	}
+	// Flush last entry
+	if let Some(name) = fields.get("Name").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+		let desc = fields.get("InterfaceDescription").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+		let link_speed = fields.get("LinkSpeed").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+		let media_type = fields.get("MediaType").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+		let status = fields.get("Status").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+		let conn_state = fields.get("MediaConnectionState").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+		let driver_ver = fields.get("DriverVersion").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+		let driver_prov = fields.get("DriverProvider").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+		result.insert(name, json!({
+			"description": desc,
+			"link_speed": link_speed,
+			"media_type": media_type,
+			"status": status,
+			"media_connection_state": conn_state,
+			"driver_version": driver_ver,
+			"driver_provider": driver_prov,
+		}));
+	}
+	result
+}
+
 pub fn get_network_json() -> Value {
 	let mut networks = Networks::new_with_refreshed_list();
 	networks.refresh(false);
+
+	// Query PowerShell Get-NetAdapter for hardware details
+	let adapter_details = query_adapter_details();
 
 	static PREV: OnceLock<Mutex<NetworkSnapshot>> = OnceLock::new();
 	let prev_state = PREV.get_or_init(|| Mutex::new(NetworkSnapshot::default()));
@@ -81,10 +170,27 @@ pub fn get_network_json() -> Value {
 
 			next_totals.insert(name.to_string(), (total_rx, total_tx));
 
+			// Merge hardware details from Get-NetAdapter
+			let hw = adapter_details.get(name);
+			let description = hw.and_then(|h| h.get("description")).cloned().unwrap_or(Value::Null);
+			let link_speed = hw.and_then(|h| h.get("link_speed")).cloned().unwrap_or(Value::Null);
+			let media_type = hw.and_then(|h| h.get("media_type")).cloned().unwrap_or(Value::Null);
+			let adapter_status = hw.and_then(|h| h.get("status")).cloned().unwrap_or(Value::Null);
+			let conn_state = hw.and_then(|h| h.get("media_connection_state")).cloned().unwrap_or(Value::Null);
+			let driver_version = hw.and_then(|h| h.get("driver_version")).cloned().unwrap_or(Value::Null);
+			let driver_provider = hw.and_then(|h| h.get("driver_provider")).cloned().unwrap_or(Value::Null);
+
 			json!({
 				"interface": name,
+				"description": description,
 				"mac_address": mac.to_string(),
 				"ip_addresses": ip_networks,
+				"link_speed": link_speed,
+				"media_type": media_type,
+				"adapter_status": adapter_status,
+				"media_connection_state": conn_state,
+				"driver_version": driver_version,
+				"driver_provider": driver_provider,
 				"received_bytes": rx,
 				"transmitted_bytes": tx,
 				"total_received_bytes": total_rx,
@@ -109,6 +215,14 @@ pub fn get_network_json() -> Value {
 
 	prev.totals_by_name = next_totals;
 	prev.last_tick = Some(now);
+
+	// Sort interfaces by name for stable ordering across refreshes
+	let mut list = list;
+	list.sort_by(|a, b| {
+		let na = a.get("interface").and_then(|v| v.as_str()).unwrap_or("");
+		let nb = b.get("interface").and_then(|v| v.as_str()).unwrap_or("");
+		na.cmp(nb)
+	});
 
 	json!({
 		"received_bytes": tick_rx,

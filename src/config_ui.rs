@@ -14,7 +14,6 @@ use wry::WebViewBuilder;
 
 use crate::{error, info, warn};
 use crate::ipc::sysdata::display::{MonitorInfo, MonitorManager};
-use crate::ipc::registry::global_registry;
 
 #[derive(Clone)]
 struct AddonMeta {
@@ -336,8 +335,10 @@ pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::err
         library_selected_monitor: None,
         selected_custom_tab: None,
         last_opened_custom_tab: None,
-        settings_pull_rate: 100,
+        settings_fast_rate: 50,
+        settings_slow_rate: 500,
         settings_pull_paused: false,
+        settings_refresh_on_request: true,
         settings_loaded: false,
     };
 
@@ -545,6 +546,31 @@ fn run_sentinel_custom_tabs_shell(
                                 let key = message.key.unwrap_or_default();
                                 let value = message.value.unwrap_or(serde_json::Value::Null);
                                 warn!("[ui] Backend setting update: {}={}", key, value);
+                                match key.as_str() {
+                                    "fast_pull_rate" => {
+                                        if let Some(ms) = value.as_u64() {
+                                            crate::config::set_fast_pull_rate_ms(ms);
+                                        }
+                                    }
+                                    "slow_pull_rate" => {
+                                        if let Some(ms) = value.as_u64() {
+                                            crate::config::set_slow_pull_rate_ms(ms);
+                                        }
+                                    }
+                                    "pull_paused" => {
+                                        if let Some(paused) = value.as_bool() {
+                                            crate::config::set_pull_paused(paused);
+                                        }
+                                    }
+                                    "refresh_on_request" => {
+                                        if let Some(enabled) = value.as_bool() {
+                                            crate::config::set_refresh_on_request(enabled);
+                                        }
+                                    }
+                                    _ => {
+                                        warn!("[ui] Unknown backend setting key: {}", key);
+                                    }
+                                }
                             }
                             "wallpaper_save_editable" => {
                                 let wallpaper_id = message.wallpaper_id.unwrap_or_default();
@@ -579,14 +605,16 @@ fn run_sentinel_custom_tabs_shell(
 
         let mut last_monitor_poll = std::time::Instant::now();
         let mut cached_monitor_json = String::new();
+        let mut cached_registry_json = String::new();
+        let mut last_registry_push = std::time::Instant::now();
         let snapshot_home = sentinel_home.clone();
 
         event_loop.run(move |event, _, control_flow| {
                 *control_flow = ControlFlow::WaitUntil(
-                    std::time::Instant::now() + std::time::Duration::from_millis(2000)
+                    std::time::Instant::now() + std::time::Duration::from_millis(500)
                 );
 
-                // Periodic monitor polling for live UI updates
+                // Periodic monitor polling for live UI updates (every 2s)
                 if last_monitor_poll.elapsed() >= std::time::Duration::from_millis(2000) {
                     last_monitor_poll = std::time::Instant::now();
                     let fresh_monitors: Vec<WallpaperShellMonitor> = MonitorManager::enumerate_monitors()
@@ -610,11 +638,23 @@ fn run_sentinel_custom_tabs_shell(
                             ));
                         }
                     }
+                }
 
-                    // Write registry snapshot for Data page
-                    if let Ok(reg) = global_registry().read() {
-                        if let Ok(json) = serde_json::to_string_pretty(&*reg) {
-                            let _ = std::fs::write(snapshot_home.join("_sentinel_registry_snapshot.json"), json);
+                // Push live registry data to the Data page (every 500ms).
+                // The UI runs in a separate process from the backend daemon,
+                // so global_registry() here is empty. Read the registry.json
+                // snapshot that the daemon writes to disk instead.
+                if last_registry_push.elapsed() >= std::time::Duration::from_millis(500) {
+                    last_registry_push = std::time::Instant::now();
+                    let registry_path = snapshot_home.join("registry.json");
+                    if let Ok(json_str) = std::fs::read_to_string(&registry_path) {
+                        // Only push if data actually changed
+                        if json_str != cached_registry_json {
+                            cached_registry_json = json_str.clone();
+                            let _ = webview.evaluate_script(&format!(
+                                "if(typeof __sentinelPushRegistry==='function')__sentinelPushRegistry({});",
+                                json_str
+                            ));
                         }
                     }
                 }
@@ -1945,6 +1985,7 @@ fn build_sentinel_custom_tabs_shell_html(
             display: flex;
             gap: 8px;
             margin-bottom: 16px;
+            flex-wrap: wrap;
         }}
         .data-filter-chip {{
             padding: 6px 14px;
@@ -1963,6 +2004,212 @@ fn build_sentinel_custom_tabs_shell_html(
             background: var(--accent-subtle);
             color: var(--accent);
             border-color: var(--accent-border);
+        }}
+        /* ── Data panel cards ─────────────────────── */
+        .data-panels-grid {{
+            columns: 3 300px;
+            column-gap: 16px;
+        }}
+        .data-panel {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            break-inside: avoid;
+            margin-bottom: 16px;
+            transition: border-color var(--transition-fast);
+        }}
+        .data-panel:hover {{
+            border-color: var(--accent-border);
+        }}
+        .data-panel-header {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 16px 10px;
+            border-bottom: 1px solid var(--border-subtle);
+        }}
+        .data-panel-icon {{
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-sm);
+            background: var(--accent-subtle);
+            color: var(--accent);
+            flex-shrink: 0;
+        }}
+        .data-panel-icon svg {{ width: 16px; height: 16px; }}
+        .data-panel-title {{
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }}
+        .data-panel-subtitle {{
+            font-size: 11px;
+            color: var(--text-dim);
+            font-weight: 400;
+        }}
+        .data-panel-body {{
+            padding: 12px 16px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }}
+        .data-row {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+        }}
+        .data-row-label {{
+            color: var(--text-secondary);
+        }}
+        .data-row-value {{
+            color: var(--text-primary);
+            font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+            font-size: 11px;
+            font-weight: 500;
+            text-align: right;
+            max-width: 60%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .data-bar-wrap {{
+            width: 100%;
+            height: 6px;
+            background: var(--bg-hover);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 2px;
+        }}
+        .data-bar-fill {{
+            height: 100%;
+            border-radius: 3px;
+            background: var(--accent);
+            transition: width 0.3s ease;
+        }}
+        .data-bar-fill.warn {{ background: #f59e0b; }}
+        .data-bar-fill.danger {{ background: #ef4444; }}
+        .data-big-value {{
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+            line-height: 1.2;
+        }}
+        .data-big-unit {{
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--text-dim);
+            margin-left: 4px;
+        }}
+        .data-tag {{
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        .data-tag.online {{ background: rgba(34,197,94,0.15); color: #22c55e; }}
+        .data-tag.offline {{ background: rgba(239,68,68,0.15); color: #ef4444; }}
+        .data-tag.charging {{ background: rgba(59,130,246,0.15); color: #3b82f6; }}
+        .data-panel-footer {{
+            padding: 0 16px 12px;
+            font-size: 11px;
+            color: var(--text-dim);
+        }}
+        .data-connection-dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }}
+        .data-connection-dot.live {{ background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.4); }}
+        .data-connection-dot.stale {{ background: #f59e0b; }}
+        .data-connection-dot.dead {{ background: #ef4444; }}
+        .data-stat-row {{
+            display: flex;
+            gap: 16px;
+        }}
+        .data-stat-item {{
+            flex: 1;
+        }}
+        .data-stat-label {{
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-dim);
+            margin-bottom: 2px;
+        }}
+        .data-stat-value {{
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+        }}
+        .data-drives-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }}
+        .data-drive-label {{
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            margin-bottom: 2px;
+        }}
+        .data-drive-label span:first-child {{ color: var(--text-secondary); }}
+        .data-drive-label span:last-child {{ color: var(--text-dim); font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace; }}
+        .data-appdata-section {{
+            margin-top: 8px;
+        }}
+        .data-appdata-monitor {{
+            margin-bottom: 12px;
+        }}
+        .data-appdata-monitor-title {{
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }}
+        .data-window-item {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+        }}
+        .data-window-item:last-child {{ border-bottom: none; }}
+        .data-window-app {{
+            font-weight: 500;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 120px;
+        }}
+        .data-window-title {{
+            flex: 1;
+            color: var(--text-dim);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .data-window-badge {{
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 600;
+            background: var(--accent-subtle);
+            color: var(--accent);
+            white-space: nowrap;
         }}
         .tab-bar {{
             display: flex;
@@ -2193,11 +2440,29 @@ fn build_sentinel_custom_tabs_shell_html(
             header.innerHTML = '<h2>Settings</h2><p style="color:var(--text-dim);margin:4px 0 0;">Backend configuration</p>';
             content.innerHTML =
                 '<div class="page-settings-group">' +
-                    '<h3>Data Collection</h3>' +
-                    '<div class="setting-row"><span class="s-label">Pull Rate (ms)</span>' +
-                        '<input type="number" id="cfg-pull-rate" class="s-input" value="1000" min="100" max="60000" step="100">' +
+                    '<h3>Data Collection — Fast Tier</h3>' +
+                    '<p style="color:var(--text-dim);font-size:12px;margin:2px 0 8px;">Lightweight data: audio, time, keyboard, mouse, idle, power, display</p>' +
+                    '<div class="setting-row"><span class="s-label">Fast Pull Rate (ms)</span>' +
+                        '<input type="number" id="cfg-fast-rate" class="s-input" value="50" min="10" max="5000" step="10">' +
                     '</div>' +
-                    '<div class="setting-row"><span class="s-label">Pause Collection</span>' +
+                '</div>' +
+                '<div class="page-settings-group">' +
+                    '<h3>Data Collection — Slow Tier</h3>' +
+                    '<p style="color:var(--text-dim);font-size:12px;margin:2px 0 8px;">Heavyweight data: CPU, GPU, RAM, storage, network, bluetooth, wifi, system, processes</p>' +
+                    '<div class="setting-row"><span class="s-label">Slow Pull Rate (ms)</span>' +
+                        '<input type="number" id="cfg-slow-rate" class="s-input" value="500" min="100" max="10000" step="100">' +
+                    '</div>' +
+                '</div>' +
+                '<div class="page-settings-group">' +
+                    '<h3>Streaming</h3>' +
+                    '<div class="setting-row"><span class="s-label">Refresh on Request</span>' +
+                        '<label class="s-toggle"><input type="checkbox" id="cfg-refresh-on-req" checked><span class="s-slider"></span></label>' +
+                    '</div>' +
+                    '<p style="color:var(--text-dim);font-size:12px;margin:2px 0 8px;">When enabled, fast-tier data is refreshed inline on every IPC request for lowest latency</p>' +
+                '</div>' +
+                '<div class="page-settings-group">' +
+                    '<h3>Pause</h3>' +
+                    '<div class="setting-row"><span class="s-label">Pause All Collection</span>' +
                         '<label class="s-toggle"><input type="checkbox" id="cfg-pull-paused"><span class="s-slider"></span></label>' +
                     '</div>' +
                 '</div>' +
@@ -2207,15 +2472,28 @@ fn build_sentinel_custom_tabs_shell_html(
                         '<select id="cfg-theme" class="s-input"><option value="dark" selected>Dark</option><option value="light">Light</option></select>' +
                     '</div>' +
                 '</div>';
-            var rateEl = document.getElementById('cfg-pull-rate');
+            var fastEl = document.getElementById('cfg-fast-rate');
+            var slowEl = document.getElementById('cfg-slow-rate');
+            var rorEl = document.getElementById('cfg-refresh-on-req');
             var pauseEl = document.getElementById('cfg-pull-paused');
-            var rateTimer = null;
-            if (rateEl) rateEl.addEventListener('input', function() {{
-                clearTimeout(rateTimer);
-                var v = Number(rateEl.value);
-                rateTimer = setTimeout(function() {{
-                    window.__sentinelBridgePost({{ type: 'backend_setting', key: 'pull_rate', value: v }});
+            var fastTimer = null;
+            var slowTimer = null;
+            if (fastEl) fastEl.addEventListener('input', function() {{
+                clearTimeout(fastTimer);
+                var v = Number(fastEl.value);
+                fastTimer = setTimeout(function() {{
+                    window.__sentinelBridgePost({{ type: 'backend_setting', key: 'fast_pull_rate', value: v }});
                 }}, 400);
+            }});
+            if (slowEl) slowEl.addEventListener('input', function() {{
+                clearTimeout(slowTimer);
+                var v = Number(slowEl.value);
+                slowTimer = setTimeout(function() {{
+                    window.__sentinelBridgePost({{ type: 'backend_setting', key: 'slow_pull_rate', value: v }});
+                }}, 400);
+            }});
+            if (rorEl) rorEl.addEventListener('change', function() {{
+                window.__sentinelBridgePost({{ type: 'backend_setting', key: 'refresh_on_request', value: rorEl.checked }});
             }});
             if (pauseEl) pauseEl.addEventListener('change', function() {{
                 window.__sentinelBridgePost({{ type: 'backend_setting', key: 'pull_paused', value: pauseEl.checked }});
@@ -2225,46 +2503,549 @@ fn build_sentinel_custom_tabs_shell_html(
         function renderDataPage() {{
             const header = document.getElementById('page-header');
             const content = document.getElementById('page-content');
-            header.innerHTML = '<h2>Data</h2><p style="color:var(--text-dim);margin:4px 0 0;">Live registry snapshot</p>';
-            var chips = ['All','Addons','System','App'];
-            var activeChip = 'All';
+            header.innerHTML = '<h2>Data</h2><p style="color:var(--text-dim);margin:4px 0 0;"><span class="data-connection-dot live"></span>Live registry — updates every 500ms</p>';
+            var chips = ['All','Hardware','Network','Input','System','App','JSON'];
+            window.__dataActiveChip = window.__dataActiveChip || 'All';
             content.innerHTML =
                 '<div class="data-filter">' +
-                    chips.map(function(c) {{ return '<button class="data-filter-chip' + (c === activeChip ? ' active' : '') + '">' + c + '</button>'; }}).join('') +
+                    chips.map(function(c) {{ return '<button class="data-filter-chip' + (c === window.__dataActiveChip ? ' active' : '') + '">' + c + '</button>'; }}).join('') +
                 '</div>' +
-                '<div class="data-json-wrap"><pre id="data-json-pre">Loading\u2026</pre></div>';
+                '<div id="data-panels-container" class="data-panels-grid"></div>' +
+                '<div id="data-json-fallback" class="data-json-wrap" style="display:none;"><pre id="data-json-pre">Loading\u2026</pre></div>';
             content.querySelectorAll('.data-filter-chip').forEach(function(chip) {{
                 chip.onclick = function() {{
-                    activeChip = chip.textContent;
-                    content.querySelectorAll('.data-filter-chip').forEach(function(c) {{ c.classList.toggle('active', c.textContent === activeChip); }});
-                    doFetchRegistry(activeChip);
+                    window.__dataActiveChip = chip.textContent;
+                    content.querySelectorAll('.data-filter-chip').forEach(function(c) {{ c.classList.toggle('active', c.textContent === window.__dataActiveChip); }});
+                    renderDataPanels(window.__lastRegistryData);
                 }};
             }});
-            doFetchRegistry(activeChip);
+            // Render immediately if we already have data
+            if (window.__lastRegistryData) {{
+                renderDataPanels(window.__lastRegistryData);
+            }} else {{
+                document.getElementById('data-panels-container').innerHTML = '<div style="color:var(--text-dim);padding:20px;">Waiting for registry data\u2026</div>';
+            }}
         }}
 
-        function doFetchRegistry(filter) {{
-            var pre = document.getElementById('data-json-pre');
-            if (!pre) return;
-            pre.textContent = 'Loading\u2026';
-            fetch('sentinel://localhost/_sentinel_registry_snapshot.json')
-                .then(function(r) {{ return r.ok ? r.json() : Promise.reject('not found'); }})
-                .then(function(data) {{
-                    var subset = data;
-                    if (filter === 'Addons') subset = data.addons || {{}};
-                    else if (filter === 'System') subset = data.sysdata || {{}};
-                    else if (filter === 'App') subset = data.appdata || {{}};
-                    pre.textContent = JSON.stringify(subset, null, 2);
-                }})
-                .catch(function() {{
-                    pre.textContent = JSON.stringify(ADDONS, null, 2);
+        // ── Panel icon SVGs ──
+        var PANEL_ICONS = {{
+            cpu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="15" x2="23" y2="15"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="15" x2="4" y2="15"/></svg>',
+            gpu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="6" y1="6" x2="6" y2="2"/><line x1="18" y1="6" x2="18" y2="2"/></svg>',
+            ram: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="1"/><line x1="6" y1="17" x2="6" y2="21"/><line x1="10" y1="17" x2="10" y2="21"/><line x1="14" y1="17" x2="14" y2="21"/><line x1="18" y1="17" x2="18" y2="21"/><rect x="5" y="9" width="2" height="4" rx="0.5"/><rect x="9" y="9" width="2" height="4" rx="0.5"/><rect x="13" y="9" width="2" height="4" rx="0.5"/><rect x="17" y="9" width="2" height="4" rx="0.5"/></svg>',
+            storage: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+            network: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+            audio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>',
+            time: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+            keyboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="10"/><line x1="10" y1="10" x2="10" y2="10"/><line x1="14" y1="10" x2="14" y2="10"/><line x1="18" y1="10" x2="18" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/></svg>',
+            mouse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/></svg>',
+            power: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="6" width="18" height="12" rx="2"/><line x1="23" y1="10" x2="23" y2="14"/><line x1="19" y1="10" x2="19" y2="14"/></svg>',
+            bluetooth: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/></svg>',
+            wifi: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>',
+            system: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+            displays: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+            processes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+            idle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+            appdata: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>'
+        }};
+
+        var FILTER_MAP = {{
+            'All': null,
+            'Hardware': ['cpu','gpu','ram','storage','displays'],
+            'Network': ['network','wifi','bluetooth'],
+            'Input': ['keyboard','mouse','audio'],
+            'System': ['time','power','idle','system','processes'],
+            'App': ['appdata'],
+            'JSON': ['__json__']
+        }};
+
+        function fmtBytes(b) {{
+            if (!b && b !== 0) return '—';
+            if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+            if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+            if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+            return b + ' B';
+        }}
+
+        function pctBar(pct, label) {{
+            var cls = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
+            return '<div class="data-row"><span class="data-row-label">' + (label||'') + '</span><span class="data-row-value">' + pct.toFixed(1) + '%</span></div>' +
+                   '<div class="data-bar-wrap"><div class="data-bar-fill ' + cls + '" style="width:' + Math.min(pct,100) + '%"></div></div>';
+        }}
+
+        function dataRow(label, value) {{
+            return '<div class="data-row"><span class="data-row-label">' + label + '</span><span class="data-row-value">' + (value != null ? value : '\u2014') + '</span></div>';
+        }}
+
+        function panelCard(key, title, subtitle, bodyHtml) {{
+            var icon = PANEL_ICONS[key] || PANEL_ICONS.system;
+            return '<div class="data-panel" data-panel-key="' + key + '">' +
+                '<div class="data-panel-header">' +
+                    '<div class="data-panel-icon">' + icon + '</div>' +
+                    '<div><div class="data-panel-title">' + title + '</div>' +
+                        (subtitle ? '<div class="data-panel-subtitle">' + subtitle + '</div>' : '') +
+                    '</div>' +
+                '</div>' +
+                '<div class="data-panel-body">' + bodyHtml + '</div>' +
+            '</div>';
+        }}
+
+        function buildCpuPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            if (d.usage_percent != null) body += pctBar(d.usage_percent, 'Usage');
+            body += dataRow('Name', d.brand || '\u2014');
+            if (d.base_frequency_mhz != null) body += dataRow('Base Speed', (d.base_frequency_mhz/1000).toFixed(2) + ' GHz');
+            if (d.frequency_mhz != null) body += dataRow('Speed', (d.frequency_mhz/1000).toFixed(2) + ' GHz');
+            if (d.sockets != null) body += dataRow('Sockets', d.sockets);
+            if (d.physical_cores != null) body += dataRow('Cores', d.physical_cores);
+            if (d.logical_cores != null) body += dataRow('Logical Processors', d.logical_cores);
+            if (d.virtualization != null) body += dataRow('Virtualization', d.virtualization ? '<span class="data-tag online">Enabled</span>' : '<span class="data-tag offline">Disabled</span>');
+            if (d.l1_cache_kb != null) body += dataRow('L1 Cache', d.l1_cache_kb >= 1024 ? (d.l1_cache_kb/1024).toFixed(1) + ' MB' : d.l1_cache_kb + ' KB');
+            if (d.l2_cache_kb != null) body += dataRow('L2 Cache', d.l2_cache_kb >= 1024 ? (d.l2_cache_kb/1024).toFixed(1) + ' MB' : d.l2_cache_kb + ' KB');
+            if (d.l3_cache_kb != null) body += dataRow('L3 Cache', d.l3_cache_kb >= 1024 ? (d.l3_cache_kb/1024).toFixed(1) + ' MB' : d.l3_cache_kb + ' KB');
+            if (d.process_count != null) body += dataRow('Processes', d.process_count);
+            if (d.thread_count != null) body += dataRow('Threads', d.thread_count);
+            if (d.handle_count != null) body += dataRow('Handles', d.handle_count);
+            if (d.temperature && d.temperature.average_c) body += dataRow('Temperature', d.temperature.average_c.toFixed(1) + ' \u00b0C');
+            if (d.uptime_seconds != null) {{
+                var s = d.uptime_seconds; var dd = Math.floor(s/86400); var hh = Math.floor((s%86400)/3600); var mm = Math.floor((s%3600)/60); var ss = s%60;
+                body += dataRow('Up Time', (dd > 0 ? dd + ':' : '') + (hh<10?'0':'') + hh + ':' + (mm<10?'0':'') + mm + ':' + (ss<10?'0':'') + ss);
+            }}
+            return panelCard('cpu', 'CPU', d.brand || null, body);
+        }}
+
+        function buildGpuPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var adapters = d.adapters || [];
+            if (adapters.length > 1) {{
+                // Multi-GPU: show each adapter as a section
+                adapters.forEach(function(a, i) {{
+                    body += '<div style="margin-bottom:8px;padding-bottom:8px;' + (i < adapters.length-1 ? 'border-bottom:1px solid var(--border-color,#333);' : '') + '">';
+                    body += dataRow('GPU ' + i, a.name || '\u2014');
+                    if (a.usage_percent != null) body += pctBar(a.usage_percent, 'Utilization');
+                    if (a.vram_total_mb != null && a.vram_used_mb != null) {{
+                        body += dataRow('Dedicated Memory', (a.vram_used_mb/1024).toFixed(1) + ' / ' + (a.vram_total_mb/1024).toFixed(1) + ' GB');
+                    }}
+                    if (a.shared_gpu_memory_bytes != null) body += dataRow('Shared Memory', fmtBytes(a.shared_gpu_memory_bytes));
+                    if (a.driver_version) body += dataRow('Driver', a.driver_version);
+                    if (a.driver_date) body += dataRow('Driver Date', a.driver_date);
+                    if (a.manufacturer) body += dataRow('Manufacturer', a.manufacturer);
+                    if (a.physical_location && typeof a.physical_location === 'object') {{
+                        body += dataRow('Physical Location', 'PCI bus ' + (a.physical_location.bus!=null?a.physical_location.bus:'?') + ', device ' + (a.physical_location.device!=null?a.physical_location.device:'?') + ', function ' + (a.physical_location.function!=null?a.physical_location.function:'?'));
+                    }}
+                    if (a.temperature_c != null) body += dataRow('Temperature', a.temperature_c.toFixed(1) + ' \u00b0C');
+                    if (a.power_draw_w != null) body += dataRow('Power Draw', a.power_draw_w.toFixed(1) + ' W');
+                    if (a.encoder_usage_percent != null) body += dataRow('Video Encode', a.encoder_usage_percent.toFixed(0) + '%');
+                    if (a.decoder_usage_percent != null) body += dataRow('Video Decode', a.decoder_usage_percent.toFixed(0) + '%');
+                    body += '</div>';
                 }});
+            }} else {{
+                // Single GPU — flat layout
+                if (d.usage_percent != null) body += pctBar(d.usage_percent, 'GPU Load');
+                body += dataRow('Name', d.name || '\u2014');
+                if (d.vram_total_mb != null && d.vram_used_mb != null) {{
+                    body += dataRow('Dedicated Memory', (d.vram_used_mb/1024).toFixed(1) + ' / ' + (d.vram_total_mb/1024).toFixed(1) + ' GB');
+                }}
+                if (d.shared_gpu_memory_bytes != null) body += dataRow('Shared Memory', fmtBytes(d.shared_gpu_memory_bytes));
+                if (d.driver_version) body += dataRow('Driver', d.driver_version);
+                if (d.driver_date) body += dataRow('Driver Date', d.driver_date);
+                if (d.manufacturer) body += dataRow('Manufacturer', d.manufacturer);
+                if (d.physical_location && typeof d.physical_location === 'object') {{
+                    body += dataRow('Physical Location', 'PCI bus ' + (d.physical_location.bus!=null?d.physical_location.bus:'?') + ', device ' + (d.physical_location.device!=null?d.physical_location.device:'?') + ', function ' + (d.physical_location.function!=null?d.physical_location.function:'?'));
+                }}
+                if (d.temperature_c != null) body += dataRow('Temperature', d.temperature_c.toFixed(1) + ' \u00b0C');
+                if (d.power_draw_w != null) body += dataRow('Power Draw', d.power_draw_w.toFixed(1) + ' W');
+                if (d.fan_speed_percent != null) body += dataRow('Fan Speed', d.fan_speed_percent + '%');
+                if (d.clock_graphics_mhz != null) body += dataRow('GPU Clock', d.clock_graphics_mhz + ' MHz');
+                if (d.clock_memory_mhz != null) body += dataRow('Mem Clock', d.clock_memory_mhz + ' MHz');
+                if (d.encoder_usage_percent != null) body += dataRow('Video Encode', d.encoder_usage_percent.toFixed(0) + '%');
+                if (d.decoder_usage_percent != null) body += dataRow('Video Decode', d.decoder_usage_percent.toFixed(0) + '%');
+            }}
+            return panelCard('gpu', 'GPU', d.name || null, body);
+        }}
+
+        function buildRamPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            if (d.usage_percent != null) body += pctBar(d.usage_percent, 'Usage');
+            if (d.total_bytes != null) {{
+                body += '<div class="data-stat-row">' +
+                    '<div class="data-stat-item"><div class="data-stat-label">In Use</div><div class="data-stat-value">' + fmtBytes(d.used_bytes) + '</div></div>' +
+                    '<div class="data-stat-item"><div class="data-stat-label">Available</div><div class="data-stat-value">' + fmtBytes(d.available_bytes) + '</div></div>' +
+                    '<div class="data-stat-item"><div class="data-stat-label">Total</div><div class="data-stat-value">' + fmtBytes(d.total_bytes) + '</div></div>' +
+                '</div>';
+            }}
+            if (d.speed_mhz) body += dataRow('Speed', d.speed_mhz + ' MT/s');
+            if (d.slots_used != null && d.slots_total != null) body += dataRow('Slots Used', d.slots_used + ' of ' + d.slots_total);
+            if (d.form_factor) body += dataRow('Form Factor', d.form_factor);
+            if (d.memory_type) body += dataRow('Type', d.memory_type);
+            if (d.hardware_reserved_bytes != null) body += dataRow('Hardware Reserved', fmtBytes(d.hardware_reserved_bytes));
+            if (d.committed_bytes != null && d.commit_limit_bytes != null) body += dataRow('Committed', fmtBytes(d.committed_bytes) + ' / ' + fmtBytes(d.commit_limit_bytes));
+            if (d.cached_bytes != null) body += dataRow('Cached', fmtBytes(d.cached_bytes));
+            if (d.paged_pool_bytes != null) body += dataRow('Paged Pool', fmtBytes(d.paged_pool_bytes));
+            if (d.non_paged_pool_bytes != null) body += dataRow('Non-paged Pool', fmtBytes(d.non_paged_pool_bytes));
+            if (d.compressed_bytes != null && d.compressed_bytes > 0) body += dataRow('Compressed', fmtBytes(d.compressed_bytes));
+            return panelCard('ram', 'Memory', d.memory_type ? d.total_bytes ? fmtBytes(d.total_bytes) + ' ' + d.memory_type : d.memory_type : null, body);
+        }}
+
+        function buildStoragePanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var drives = d.disks || d.drives || (Array.isArray(d) ? d : []);
+            var physDisks = d.physical_disks || [];
+            if (physDisks.length > 0) {{
+                physDisks.forEach(function(pd, i) {{
+                    body += '<div style="margin-bottom:8px;padding-bottom:8px;' + (i < physDisks.length-1 ? 'border-bottom:1px solid var(--border-color,#333);' : '') + '">';
+                    var label = 'Disk ' + (pd.disk_number != null ? pd.disk_number : i);
+                    var model = pd.model || '';
+                    body += dataRow(label, model || '\u2014');
+                    if (pd.media_type) body += dataRow('Type', pd.media_type + (pd.bus_type ? ' (' + pd.bus_type + ')' : ''));
+                    if (pd.physical_capacity_bytes != null) body += dataRow('Capacity', fmtBytes(pd.physical_capacity_bytes));
+                    if (pd.system_disk) body += dataRow('System Disk', '<span class="data-tag online">Yes</span>');
+                    if (pd.page_file_disk) body += dataRow('Page File', '<span class="data-tag online">Yes</span>');
+                    if (pd.health_status) body += dataRow('Health', pd.health_status);
+                    if (pd.firmware_version) body += dataRow('Firmware', pd.firmware_version);
+                    // Show logical volumes for this physical disk
+                    var pdVolumes = pd.volumes || [];
+                    pdVolumes.forEach(function(v) {{
+                        if (v.drive_letter) body += dataRow('  ' + v.drive_letter + ':', v.label ? v.label + ' (' + fmtBytes(v.size_bytes) + ')' : fmtBytes(v.size_bytes));
+                    }});
+                    body += '</div>';
+                }});
+            }}
+            if (drives.length > 0) {{
+                body += '<div class="data-drives-list">';
+                drives.forEach(function(drv) {{
+                    var name = drv.mount || drv.name || drv.letter || '?';
+                    var total = drv.total_bytes || 0;
+                    var avail = drv.available_bytes || 0;
+                    var used = drv.used_bytes || (total - avail);
+                    var pct = total > 0 ? (used / total * 100) : 0;
+                    var cls = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
+                    body += '<div><div class="data-drive-label"><span>' + name + '</span><span>' + fmtBytes(used) + ' / ' + fmtBytes(total) + '</span></div>' +
+                            '<div class="data-bar-wrap"><div class="data-bar-fill ' + cls + '" style="width:' + Math.min(pct,100) + '%"></div></div></div>';
+                }});
+                body += '</div>';
+            }} else if (physDisks.length === 0) {{
+                body += dataRow('Status', 'No drives detected');
+            }}
+            return panelCard('storage', 'Storage', (physDisks.length || drives.length) + ' disk(s)', body);
+        }}
+
+        function buildNetworkPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var ifaces = d.interfaces || [];
+            if (Array.isArray(ifaces) && ifaces.length > 0) {{
+                ifaces.slice(0, 6).forEach(function(iface, idx) {{
+                    var name = iface.interface || iface.name || 'Interface';
+                    var desc = iface.description || '';
+                    var hasTraffic = (iface.received_bytes_per_second > 0 || iface.transmitted_bytes_per_second > 0 || iface.total_received_bytes > 0);
+                    var statusTag = iface.adapter_status === 'Up' ? 'online' : (hasTraffic ? 'online' : 'offline');
+                    var statusText = iface.adapter_status || (hasTraffic ? 'Active' : 'Idle');
+                    body += '<div style="' + (idx > 0 ? 'margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);' : '') + '">';
+                    body += dataRow(name, '<span class="data-tag ' + statusTag + '">' + statusText + '</span>');
+                    if (desc) body += dataRow('Adapter', desc);
+                    if (iface.link_speed) body += dataRow('Link Speed', iface.link_speed);
+                    if (iface.media_type) body += dataRow('Type', iface.media_type);
+                    var ipv4 = null; var ipv6 = null;
+                    if (iface.ip_addresses && Array.isArray(iface.ip_addresses)) {{
+                        for (var i = 0; i < iface.ip_addresses.length; i++) {{
+                            var addr = iface.ip_addresses[i].addr || '';
+                            if (!ipv4 && addr && addr.indexOf('.') !== -1 && addr.indexOf(':') === -1) ipv4 = addr;
+                            if (!ipv6 && addr && addr.indexOf(':') !== -1) ipv6 = addr;
+                        }}
+                    }}
+                    if (ipv4) body += dataRow('IPv4', ipv4);
+                    if (ipv6) body += dataRow('IPv6', '<span style="font-size:11px">' + ipv6 + '</span>');
+                    if (iface.received_bytes_per_second != null) body += dataRow('Down', fmtBytes(Math.round(iface.received_bytes_per_second)) + '/s');
+                    if (iface.transmitted_bytes_per_second != null) body += dataRow('Up', fmtBytes(Math.round(iface.transmitted_bytes_per_second)) + '/s');
+                    if (iface.driver_version) body += dataRow('Driver', iface.driver_version);
+                    body += '</div>';
+                }});
+            }} else {{
+                body += dataRow('Status', 'No interfaces detected');
+            }}
+            return panelCard('network', 'Network', (ifaces.length || 0) + ' interface(s)', body);
+        }}
+
+        function buildAudioPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var od = d.output_device || {{}};
+            var id = d.input_device || {{}};
+            if (od.volume_percent != null) {{
+                body += pctBar(od.volume_percent, 'Volume');
+            }}
+            body += dataRow('Muted', od.muted != null ? (od.muted ? 'Yes' : 'No') : '\u2014');
+            if (od.name) body += dataRow('Output', od.name);
+            if (id.name) body += dataRow('Input', id.name);
+            var ms = d.media_session;
+            if (ms && ms.playing) {{
+                body += dataRow('Playing', (ms.title || '?') + (ms.artist ? ' \u2014 ' + ms.artist : ''));
+            }}
+            return panelCard('audio', 'Audio', null, body);
+        }}
+
+        function buildTimePanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            if (d.iso || d.datetime) {{
+                var t = d.iso || d.datetime;
+                body += '<div class="data-big-value">' + t.substring(11,19) + '</div>';
+                body += dataRow('Date', t.substring(0,10));
+            }}
+            if (d.timezone) body += dataRow('Timezone', d.timezone);
+            if (d.uptime_seconds != null) {{
+                var s = d.uptime_seconds;
+                var h = Math.floor(s/3600); var m = Math.floor((s%3600)/60);
+                body += dataRow('Uptime', h + 'h ' + m + 'm');
+            }}
+            return panelCard('time', 'Time', null, body);
+        }}
+
+        function buildKeyboardPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var ts = d.toggle_states || {{}};
+            body += dataRow('Caps Lock', ts.caps_lock ? '<span class="data-tag online">ON</span>' : '<span class="data-tag offline">OFF</span>');
+            body += dataRow('Num Lock', ts.num_lock ? '<span class="data-tag online">ON</span>' : '<span class="data-tag offline">OFF</span>');
+            body += dataRow('Scroll Lock', ts.scroll_lock ? '<span class="data-tag online">ON</span>' : '<span class="data-tag offline">OFF</span>');
+            if (d.layout_id) body += dataRow('Layout', d.layout_id);
+            if (d.type_name) body += dataRow('Type', d.type_name);
+            return panelCard('keyboard', 'Keyboard', null, body);
+        }}
+
+        function buildMousePanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var c = d.cursor || {{}};
+            var b = d.buttons || {{}};
+            if (c.x != null && c.y != null) body += dataRow('Position', c.x + ', ' + c.y);
+            if (b.count != null) body += dataRow('Buttons', b.count);
+            if (b.swapped != null) body += dataRow('Swap Buttons', b.swapped ? 'Yes' : 'No');
+            if (d.speed != null) body += dataRow('Speed', d.speed);
+            if (d.wheel_present != null) body += dataRow('Wheel', d.wheel_present ? 'Present' : 'None');
+            return panelCard('mouse', 'Mouse', null, body);
+        }}
+
+        function buildPowerPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var bat = d.battery || {{}};
+            if (bat.percent != null) {{
+                body += pctBar(bat.percent, 'Battery');
+            }}
+            var acOn = d.ac_status === 'online';
+            var status = acOn ? 'AC Power' : (bat.charging ? 'Charging' : 'Battery');
+            var tagClass = acOn || bat.charging ? 'charging' : (bat.percent != null && bat.percent < 20 ? 'offline' : 'online');
+            body += dataRow('Status', '<span class="data-tag ' + tagClass + '">' + status + '</span>');
+            if (bat.saver_active != null) body += dataRow('Battery Saver', bat.saver_active ? 'Active' : 'Off');
+            if (d.power_plan) body += dataRow('Power Plan', d.power_plan);
+            return panelCard('power', 'Power', null, body);
+        }}
+
+        function buildWifiPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var c = d.connected || {{}};
+            if (c.ssid) body += dataRow('SSID', c.ssid);
+            if (c.signal_percent != null) body += pctBar(c.signal_percent, 'Signal');
+            if (c.bssid) body += dataRow('BSSID', c.bssid);
+            if (c.channel) body += dataRow('Channel', c.channel);
+            if (c.band) body += dataRow('Band', c.band);
+            if (c.radio_type) body += dataRow('Protocol', c.radio_type);
+            body += dataRow('Connected', c.is_connected ? '<span class="data-tag online">Yes</span>' : '<span class="data-tag offline">No</span>');
+            return panelCard('wifi', 'WiFi', c.ssid || null, body);
+        }}
+
+        function buildBluetoothPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var ad = d.adapter || {{}};
+            body += dataRow('Available', ad.present ? '<span class="data-tag online">Yes</span>' : '<span class="data-tag offline">No</span>');
+            if (ad.status) body += dataRow('Status', ad.status);
+            if (ad.name) body += dataRow('Adapter', ad.name);
+            var devices = d.devices || [];
+            if (devices.length > 0) {{
+                body += dataRow('Devices', devices.length);
+                devices.slice(0, 5).forEach(function(dev) {{
+                    var devName = typeof dev === 'string' ? dev : (dev.name || dev.address || '?');
+                    var conn = dev.connected ? ' <span class="data-tag online">Connected</span>' : '';
+                    body += dataRow('', devName + conn);
+                }});
+            }}
+            return panelCard('bluetooth', 'Bluetooth', null, body);
+        }}
+
+        function buildSystemPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var os = d.os || {{}};
+            if (os.long_name || os.name) body += dataRow('OS', os.long_name || os.name);
+            if (os.version) body += dataRow('Version', os.version);
+            if (d.hostname || d.computer_name) body += dataRow('Hostname', d.hostname || d.computer_name);
+            if (d.username) body += dataRow('User', d.username);
+            if (os.cpu_arch || os.arch) body += dataRow('Arch', os.cpu_arch || os.arch);
+            if (d.motherboard && d.motherboard.manufacturer && d.motherboard.product) body += dataRow('Board', d.motherboard.manufacturer + ' ' + d.motherboard.product);
+            return panelCard('system', 'System', d.hostname || d.computer_name || null, body);
+        }}
+
+        function buildDisplaysPanel(displays) {{
+            if (!displays || !Array.isArray(displays) || displays.length === 0) return '';
+            var body = '';
+            displays.forEach(function(m, i) {{
+                var meta = m.metadata || m;
+                var w = meta.width || '?';
+                var h = meta.height || '?';
+                var primary = meta.primary ? ' <span class="data-tag online">PRIMARY</span>' : '';
+                var monName = meta.monitor_name || '';
+                body += '<div style="' + (i > 0 ? 'margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);' : '') + '">';
+                body += dataRow('Monitor ' + (i+1) + primary, monName || (w + '\u00d7' + h));
+                body += dataRow('Resolution', w + '\u00d7' + h);
+                if (meta.aspect_ratio) body += dataRow('Aspect Ratio', meta.aspect_ratio);
+                if (meta.refresh_rate_hz) body += dataRow('Refresh Rate', meta.refresh_rate_hz + ' Hz');
+                if (meta.dpi) body += dataRow('DPI', meta.dpi);
+                if (meta.scale && meta.scale !== 1.0) body += dataRow('Scale', (meta.scale * 100).toFixed(0) + '%');
+                if (meta.color_depth_bits) body += dataRow('Color Depth', meta.color_depth_bits + ' bit' + (meta.bits_per_channel ? ' (' + meta.bits_per_channel + ' bpc)' : ''));
+                if (meta.orientation && meta.orientation !== 'landscape') body += dataRow('Orientation', meta.orientation);
+                if (meta.connection_type) body += dataRow('Connection', meta.connection_type);
+                if (meta.hdr_supported) body += dataRow('HDR', '<span class="data-tag online">Supported</span>');
+                if (meta.manufacturer) body += dataRow('Manufacturer', meta.manufacturer);
+                if (meta.physical_width_mm && meta.physical_height_mm) {{
+                    var diag = Math.sqrt(meta.physical_width_mm*meta.physical_width_mm + meta.physical_height_mm*meta.physical_height_mm) / 25.4;
+                    body += dataRow('Size', meta.physical_width_mm/10 + ' \u00d7 ' + meta.physical_height_mm/10 + ' cm (' + diag.toFixed(1) + '")');
+                }}
+                if (meta.year_of_manufacture && meta.year_of_manufacture > 0) body += dataRow('Year', meta.year_of_manufacture);
+                body += '</div>';
+            }});
+            return panelCard('displays', 'Displays', displays.length + ' monitor(s)', body);
+        }}
+
+        function buildIdlePanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            if (d.idle_seconds != null || d.idle_ms != null) {{
+                var sec = d.idle_seconds != null ? d.idle_seconds : Math.floor(d.idle_ms / 1000);
+                var m = Math.floor(sec / 60);
+                var s = sec % 60;
+                body += '<div class="data-big-value">' + m + '<span class="data-big-unit">m</span> ' + s + '<span class="data-big-unit">s</span></div>';
+            }}
+            if (d.screensaver_active != null) body += dataRow('Screensaver', d.screensaver_active ? 'Active' : 'Inactive');
+            if (d.screen_locked != null) body += dataRow('Screen Locked', d.screen_locked ? 'Yes' : 'No');
+            if (d.idle_state) body += dataRow('State', d.idle_state);
+            return panelCard('idle', 'Idle', null, body);
+        }}
+
+        function buildProcessesPanel(d) {{
+            if (!d || d === null) return '';
+            var body = '';
+            var procs = d.top_cpu || d.top_memory || [];
+            if (d.total_count != null) body += dataRow('Total', d.total_count);
+            if (procs.length > 0) {{
+                procs.slice(0, 8).forEach(function(p) {{
+                    var name = p.name || '?';
+                    var cpu = p.cpu_percent != null ? p.cpu_percent.toFixed(1) + '%' : '';
+                    var mem = p.memory_bytes ? fmtBytes(p.memory_bytes) : '';
+                    body += dataRow(name, cpu + (cpu && mem ? ' / ' : '') + mem);
+                }});
+            }} else {{
+                body += dataRow('Status', 'No process data');
+            }}
+            return panelCard('processes', 'Processes', d.total_count ? d.total_count + ' running' : null, body);
+        }}
+
+        function buildAppdataPanel(appdata) {{
+            if (!appdata || typeof appdata !== 'object') return '';
+            var monitors = Object.keys(appdata);
+            if (monitors.length === 0) return '';
+            var body = '<div class="data-appdata-section">';
+            monitors.forEach(function(monId, idx) {{
+                var entry = appdata[monId];
+                var windows = (entry && entry.windows) || [];
+                body += '<div class="data-appdata-monitor">';
+                body += '<div class="data-appdata-monitor-title">Monitor ' + (idx + 1) + ' <span style="color:var(--text-dim);font-weight:400;font-size:11px;">' + monId.substring(0,12) + '\u2026</span></div>';
+                if (windows.length === 0) {{
+                    body += '<div style="font-size:12px;color:var(--text-dim);">No active windows</div>';
+                }} else {{
+                    windows.forEach(function(w) {{
+                        body += '<div class="data-window-item">' +
+                            '<span class="data-window-app">' + (w.app_name || '?') + '</span>' +
+                            '<span class="data-window-title">' + (w.window_title || '') + '</span>' +
+                            (w.focused ? '<span class="data-window-badge">focused</span>' : '') +
+                            (w.window_state && w.window_state !== 'normal' ? '<span class="data-window-badge">' + w.window_state + '</span>' : '') +
+                        '</div>';
+                    }});
+                }}
+                body += '</div>';
+            }});
+            body += '</div>';
+            return panelCard('appdata', 'Active Windows', monitors.length + ' monitor(s)', body);
+        }}
+
+        function renderDataPanels(data) {{
+            var container = document.getElementById('data-panels-container');
+            var jsonFallback = document.getElementById('data-json-fallback');
+            if (!container) return;
+            if (!data) {{ container.innerHTML = '<div style="color:var(--text-dim);padding:20px;">No data available</div>'; return; }}
+
+            var filter = window.__dataActiveChip || 'All';
+
+            // JSON raw view
+            if (filter === 'JSON') {{
+                container.style.display = 'none';
+                if (jsonFallback) {{
+                    jsonFallback.style.display = 'block';
+                    var pre = document.getElementById('data-json-pre');
+                    if (pre) pre.textContent = JSON.stringify(data, null, 2);
+                }}
+                return;
+            }}
+
+            if (jsonFallback) jsonFallback.style.display = 'none';
+            container.style.display = '';
+
+            var allowed = FILTER_MAP[filter];
+            var sys = data.sysdata || {{}};
+            var html = '';
+
+            function shouldShow(key) {{ return !allowed || allowed.indexOf(key) !== -1; }}
+
+            if (shouldShow('time'))       html += buildTimePanel(sys.time);
+            if (shouldShow('cpu'))        html += buildCpuPanel(sys.cpu);
+            if (shouldShow('gpu'))        html += buildGpuPanel(sys.gpu);
+            if (shouldShow('ram'))        html += buildRamPanel(sys.ram);
+            if (shouldShow('storage'))    html += buildStoragePanel(sys.storage);
+            if (shouldShow('displays'))   html += buildDisplaysPanel(sys.displays);
+            if (shouldShow('network'))    html += buildNetworkPanel(sys.network);
+            if (shouldShow('wifi'))       html += buildWifiPanel(sys.wifi);
+            if (shouldShow('bluetooth'))  html += buildBluetoothPanel(sys.bluetooth);
+            if (shouldShow('audio'))      html += buildAudioPanel(sys.audio);
+            if (shouldShow('keyboard'))   html += buildKeyboardPanel(sys.keyboard);
+            if (shouldShow('mouse'))      html += buildMousePanel(sys.mouse);
+            if (shouldShow('power'))      html += buildPowerPanel(sys.power);
+            if (shouldShow('idle'))       html += buildIdlePanel(sys.idle);
+            if (shouldShow('system'))     html += buildSystemPanel(sys.system);
+            if (shouldShow('processes'))  html += buildProcessesPanel(sys.processes);
+            if (shouldShow('appdata'))    html += buildAppdataPanel(data.appdata);
+
+            container.innerHTML = html || '<div style="color:var(--text-dim);padding:20px;">No data for this filter</div>';
         }}
 
         window.__sentinelPushMonitors = function(monitors) {{
             var frame = document.getElementById('tabFrame');
             if (frame && frame.contentWindow) {{
                 frame.contentWindow.postMessage({{ type: '__sentinel_monitors', monitors: monitors }}, '*');
+            }}
+        }};
+
+        // Live registry data push from Rust event loop
+        window.__sentinelPushRegistry = function(data) {{
+            window.__lastRegistryData = data;
+            // Only update if the Data page is currently active
+            if (viewMode === 'data') {{
+                renderDataPanels(data);
             }}
         }};
 
@@ -2283,12 +3064,12 @@ fn build_sentinel_custom_tabs_shell_html(
             var addonPanel = document.getElementById('right-addon-panel');
             var pagePanel = document.getElementById('right-page-panel');
             if (viewMode === 'addon') {{
-                addonPanel.style.display = '';
+                addonPanel.style.display = 'flex';
                 pagePanel.style.display = 'none';
                 renderTabs();
             }} else {{
                 addonPanel.style.display = 'none';
-                pagePanel.style.display = '';
+                pagePanel.style.display = 'flex';
                 if (viewMode === 'home') renderHomePage();
                 else if (viewMode === 'settings') renderSettingsPage();
                 else if (viewMode === 'data') renderDataPage();
@@ -2316,8 +3097,10 @@ struct SentinelApp {
     selected_custom_tab: Option<String>,
     last_opened_custom_tab: Option<String>,
     // Backend settings state
-    settings_pull_rate: u64,
+    settings_fast_rate: u64,
+    settings_slow_rate: u64,
     settings_pull_paused: bool,
+    settings_refresh_on_request: bool,
     settings_loaded: bool,
 }
 
@@ -2408,8 +3191,10 @@ impl SentinelApp {
         // Load current values from the backend config on first visit
         if !self.settings_loaded {
             let cfg = crate::config::current_config();
-            self.settings_pull_rate = cfg.data_pull_rate_ms;
+            self.settings_fast_rate = cfg.fast_pull_rate_ms;
+            self.settings_slow_rate = cfg.slow_pull_rate_ms;
             self.settings_pull_paused = cfg.data_pull_paused;
+            self.settings_refresh_on_request = cfg.refresh_on_request;
             self.settings_loaded = true;
         }
 
@@ -2417,28 +3202,81 @@ impl SentinelApp {
             ui.label("Control the Sentinel backend data engine.");
             ui.add_space(10.0);
 
-            // ── Data pull rate slider ──
-            ui.label(RichText::new("Data Pull Rate").strong());
+            // ── Fast-tier pull rate slider ──
+            ui.label(RichText::new("Fast Pull Rate").strong());
             ui.label(
-                RichText::new("How often the backend collects system data and writes the registry (0–5000 ms).")
+                RichText::new("How often lightweight data is collected (audio, time, keyboard, mouse, idle, power, display). 0–5000 ms.")
                     .small()
                     .color(Color32::GRAY),
             );
             ui.add_space(4.0);
 
-            let rate_before = self.settings_pull_rate;
+            let fast_before = self.settings_fast_rate;
             ui.horizontal(|ui| {
                 ui.add(
-                    egui::Slider::new(&mut self.settings_pull_rate, 0..=5000)
+                    egui::Slider::new(&mut self.settings_fast_rate, 0..=5000)
                         .suffix(" ms")
                         .clamping(egui::SliderClamping::Always),
                 );
-                ui.label(format!("{}ms", self.settings_pull_rate));
+                ui.label(format!("{}ms", self.settings_fast_rate));
             });
 
-            if self.settings_pull_rate != rate_before {
-                crate::config::set_pull_rate_ms(self.settings_pull_rate);
-                self.global_status = format!("Pull rate → {}ms", self.settings_pull_rate);
+            if self.settings_fast_rate != fast_before {
+                crate::config::set_fast_pull_rate_ms(self.settings_fast_rate);
+                self.global_status = format!("Fast pull rate → {}ms", self.settings_fast_rate);
+            }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            // ── Slow-tier pull rate slider ──
+            ui.label(RichText::new("Slow Pull Rate").strong());
+            ui.label(
+                RichText::new("How often heavyweight data is collected (CPU, GPU, RAM, storage, network, processes, etc.). 0–10000 ms.")
+                    .small()
+                    .color(Color32::GRAY),
+            );
+            ui.add_space(4.0);
+
+            let slow_before = self.settings_slow_rate;
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.settings_slow_rate, 0..=10000)
+                        .suffix(" ms")
+                        .clamping(egui::SliderClamping::Always),
+                );
+                ui.label(format!("{}ms", self.settings_slow_rate));
+            });
+
+            if self.settings_slow_rate != slow_before {
+                crate::config::set_slow_pull_rate_ms(self.settings_slow_rate);
+                self.global_status = format!("Slow pull rate → {}ms", self.settings_slow_rate);
+            }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            // ── Refresh on request toggle ──
+            ui.label(RichText::new("Refresh on Request").strong());
+            ui.label(
+                RichText::new("When enabled, fast-tier data is refreshed inline on every IPC sysdata request for lower latency.")
+                    .small()
+                    .color(Color32::GRAY),
+            );
+            ui.add_space(4.0);
+
+            let ror_before = self.settings_refresh_on_request;
+            ui.checkbox(&mut self.settings_refresh_on_request, "Enabled");
+
+            if self.settings_refresh_on_request != ror_before {
+                crate::config::set_refresh_on_request(self.settings_refresh_on_request);
+                self.global_status = if self.settings_refresh_on_request {
+                    "Refresh on request enabled".to_string()
+                } else {
+                    "Refresh on request disabled".to_string()
+                };
             }
 
             ui.add_space(12.0);
@@ -2473,8 +3311,10 @@ impl SentinelApp {
             // ── Reload from disk button ──
             if ui.button("Reload config from disk").clicked() {
                 let cfg = crate::config::load_config();
-                self.settings_pull_rate = cfg.data_pull_rate_ms;
+                self.settings_fast_rate = cfg.fast_pull_rate_ms;
+                self.settings_slow_rate = cfg.slow_pull_rate_ms;
                 self.settings_pull_paused = cfg.data_pull_paused;
+                self.settings_refresh_on_request = cfg.refresh_on_request;
                 self.global_status = "Reloaded config.yaml".to_string();
             }
         });

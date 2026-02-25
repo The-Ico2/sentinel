@@ -14,49 +14,70 @@ use crate::paths::sentinel_root_dir;
 /// Backend configuration persisted in config.yaml next to the executable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendConfig {
-    /// Interval in milliseconds between registry data pulls (0–5000).
-    #[serde(default = "default_pull_rate")]
-    pub data_pull_rate_ms: u64,
+    /// Interval (ms) for lightweight data: time, keyboard, mouse, audio, idle, power.
+    #[serde(default = "default_fast_rate")]
+    pub fast_pull_rate_ms: u64,
+
+    /// Interval (ms) for heavyweight data: cpu, gpu, ram, storage, network, processes, etc.
+    #[serde(default = "default_slow_rate")]
+    pub slow_pull_rate_ms: u64,
 
     /// Whether data pulling is currently paused.
     #[serde(default)]
     pub data_pull_paused: bool,
+
+    /// Whether to refresh fast-tier data inline on every IPC sysdata request.
+    #[serde(default = "default_true")]
+    pub refresh_on_request: bool,
+
+    // -- back-compat: silently absorb the old single-rate field if present --
+    #[serde(default, skip_serializing)]
+    #[allow(dead_code)]
+    data_pull_rate_ms: Option<u64>,
 }
 
-fn default_pull_rate() -> u64 {
-    100
-}
+fn default_fast_rate() -> u64 { 50 }
+fn default_slow_rate() -> u64 { 500 }
+fn default_true()      -> bool { true }
 
 impl Default for BackendConfig {
     fn default() -> Self {
         Self {
-            data_pull_rate_ms: default_pull_rate(),
+            fast_pull_rate_ms: default_fast_rate(),
+            slow_pull_rate_ms: default_slow_rate(),
             data_pull_paused: false,
+            refresh_on_request: default_true(),
+            data_pull_rate_ms: None,
         }
     }
 }
 
-// ── Runtime atomics so the updater thread can read without locking ──
+// ── Runtime atomics so the updater threads can read without locking ──
 
-static PULL_RATE_MS: AtomicU64 = AtomicU64::new(100);
-static PULL_PAUSED: AtomicBool = AtomicBool::new(false);
+static FAST_PULL_RATE_MS: AtomicU64  = AtomicU64::new(50);
+static SLOW_PULL_RATE_MS: AtomicU64  = AtomicU64::new(500);
+static PULL_PAUSED:       AtomicBool = AtomicBool::new(false);
+static REFRESH_ON_REQ:    AtomicBool = AtomicBool::new(true);
 
-/// Read the current pull rate (milliseconds).
-pub fn pull_rate_ms() -> u64 {
-    PULL_RATE_MS.load(Ordering::Relaxed)
-}
+pub fn fast_pull_rate_ms() -> u64    { FAST_PULL_RATE_MS.load(Ordering::Relaxed) }
+pub fn slow_pull_rate_ms() -> u64    { SLOW_PULL_RATE_MS.load(Ordering::Relaxed) }
+pub fn pull_paused()       -> bool   { PULL_PAUSED.load(Ordering::Relaxed) }
+pub fn refresh_on_request() -> bool  { REFRESH_ON_REQ.load(Ordering::Relaxed) }
 
-/// Read whether pulling is paused.
-pub fn pull_paused() -> bool {
-    PULL_PAUSED.load(Ordering::Relaxed)
-}
-
-/// Set the pull rate at runtime and persist to disk.
-pub fn set_pull_rate_ms(ms: u64) {
+/// Set the fast-tier pull rate at runtime and persist to disk.
+pub fn set_fast_pull_rate_ms(ms: u64) {
     let clamped = ms.min(5000);
-    PULL_RATE_MS.store(clamped, Ordering::Relaxed);
-    update_and_save(|cfg| cfg.data_pull_rate_ms = clamped);
-    info!("Data pull rate set to {}ms", clamped);
+    FAST_PULL_RATE_MS.store(clamped, Ordering::Relaxed);
+    update_and_save(|cfg| cfg.fast_pull_rate_ms = clamped);
+    info!("Fast pull rate set to {}ms", clamped);
+}
+
+/// Set the slow-tier pull rate at runtime and persist to disk.
+pub fn set_slow_pull_rate_ms(ms: u64) {
+    let clamped = ms.min(10000);
+    SLOW_PULL_RATE_MS.store(clamped, Ordering::Relaxed);
+    update_and_save(|cfg| cfg.slow_pull_rate_ms = clamped);
+    info!("Slow pull rate set to {}ms", clamped);
 }
 
 /// Set the paused state at runtime and persist to disk.
@@ -64,6 +85,13 @@ pub fn set_pull_paused(paused: bool) {
     PULL_PAUSED.store(paused, Ordering::Relaxed);
     update_and_save(|cfg| cfg.data_pull_paused = paused);
     info!("Data pull paused: {}", paused);
+}
+
+/// Set refresh-on-request at runtime and persist to disk.
+pub fn set_refresh_on_request(enabled: bool) {
+    REFRESH_ON_REQ.store(enabled, Ordering::Relaxed);
+    update_and_save(|cfg| cfg.refresh_on_request = enabled);
+    info!("Refresh on request: {}", enabled);
 }
 
 // ── Persistent on-disk config ──
@@ -107,8 +135,10 @@ pub fn load_config() -> BackendConfig {
     };
 
     // Sync atomics
-    PULL_RATE_MS.store(cfg.data_pull_rate_ms.min(5000), Ordering::Relaxed);
+    FAST_PULL_RATE_MS.store(cfg.fast_pull_rate_ms.min(5000), Ordering::Relaxed);
+    SLOW_PULL_RATE_MS.store(cfg.slow_pull_rate_ms.min(10000), Ordering::Relaxed);
     PULL_PAUSED.store(cfg.data_pull_paused, Ordering::Relaxed);
+    REFRESH_ON_REQ.store(cfg.refresh_on_request, Ordering::Relaxed);
 
     // Store in global
     *global_config().write().unwrap() = cfg.clone();

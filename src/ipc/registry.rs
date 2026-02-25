@@ -174,30 +174,27 @@ pub fn discover_assets(assets_root: &Path) -> Vec<RegistryEntry> {
     entries
 }
 
-pub fn pull_sysdata() -> Vec<RegistryEntry> {
+/// Categories that belong to the **fast** (lightweight) tier.
+pub const FAST_CATEGORIES: &[&str] = &[
+    "time", "keyboard", "mouse", "audio", "idle", "power", "display",
+];
+
+/// Pull only fast-tier sysdata (cheap calls: time, keyboard, mouse, audio, idle, power, display).
+pub fn pull_sysdata_fast() -> Vec<RegistryEntry> {
     use crate::ipc::sysdata::{
         display::MonitorManager,
         audio::get_audio_json,
-        cpu::get_cpu_json,
-        gpu::get_gpu_json,
-        network::get_network_json,
-        ram::get_ram_json,
-        storage::get_storage_json,
         time::get_time_json,
         keyboard::get_keyboard_json,
         mouse::get_mouse_json,
         power::get_power_json,
-        bluetooth::get_bluetooth_json,
-        wifi::get_wifi_json,
-        system::get_system_json,
-        processes::get_processes_json,
         idle::get_idle_json,
     };
     use serde_json::json;
 
     let mut entries = Vec::new();
 
-    // Monitors
+    // Monitors (fast — just EnumDisplayMonitors + GetMonitorInfo)
     let monitors = MonitorManager::enumerate_monitors();
     for m in monitors {
         entries.push(RegistryEntry {
@@ -212,167 +209,84 @@ pub fn pull_sysdata() -> Vec<RegistryEntry> {
                 "width": m.width,
                 "height": m.height,
                 "scale": m.scale,
+                "dpi": m.dpi,
                 "refresh_rate_hz": m.refresh_rate_hz,
                 "color_depth_bits": m.color_depth_bits,
+                "bits_per_channel": m.bits_per_channel,
                 "orientation": m.orientation,
+                "aspect_ratio": m.aspect_ratio,
                 "device_name": m.device_name,
+                "monitor_name": m.monitor_name,
+                "connection_type": m.connection_type,
+                "hdr_supported": m.hdr_supported,
+                "physical_width_mm": m.physical_width_mm,
+                "physical_height_mm": m.physical_height_mm,
+                "manufacturer": m.manufacturer,
+                "product_code": m.product_code,
+                "serial_number": m.serial_number,
+                "year_of_manufacture": m.year_of_manufacture,
             }),
             path: std::path::PathBuf::new(),
             exe_path: "".into(),
         });
     }
 
-    // CPU
-    entries.push(RegistryEntry {
-        id: "cpu".into(),
-        category: "cpu".into(),
-        subtype: "system".into(),
-        metadata: get_cpu_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // RAM
-    entries.push(RegistryEntry {
-        id: "ram".into(),
-        category: "ram".into(),
-        subtype: "system".into(),
-        metadata: get_ram_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // GPU
-    entries.push(RegistryEntry {
-        id: "gpu".into(),
-        category: "gpu".into(),
-        subtype: "system".into(),
-        metadata: get_gpu_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Storage
-    entries.push(RegistryEntry {
-        id: "storage".into(),
-        category: "storage".into(),
-        subtype: "system".into(),
-        metadata: get_storage_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Network
-    entries.push(RegistryEntry {
-        id: "network".into(),
-        category: "network".into(),
-        subtype: "system".into(),
-        metadata: get_network_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Audio
-    entries.push(RegistryEntry {
-        id: "audio".into(),
-        category: "audio".into(),
-        subtype: "system".into(),
-        metadata: get_audio_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Time
-    entries.push(RegistryEntry {
-        id: "time".into(),
-        category: "time".into(),
-        subtype: "system".into(),
-        metadata: get_time_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Keyboard
-    entries.push(RegistryEntry {
-        id: "keyboard".into(),
-        category: "keyboard".into(),
-        subtype: "system".into(),
-        metadata: get_keyboard_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Mouse
-    entries.push(RegistryEntry {
-        id: "mouse".into(),
-        category: "mouse".into(),
-        subtype: "system".into(),
-        metadata: get_mouse_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Power
-    entries.push(RegistryEntry {
-        id: "power".into(),
-        category: "power".into(),
-        subtype: "system".into(),
-        metadata: get_power_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Bluetooth
-    entries.push(RegistryEntry {
-        id: "bluetooth".into(),
-        category: "bluetooth".into(),
-        subtype: "system".into(),
-        metadata: get_bluetooth_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // WiFi
-    entries.push(RegistryEntry {
-        id: "wifi".into(),
-        category: "wifi".into(),
-        subtype: "system".into(),
-        metadata: get_wifi_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // System
-    entries.push(RegistryEntry {
-        id: "system".into(),
-        category: "system".into(),
-        subtype: "system".into(),
-        metadata: get_system_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Processes
-    entries.push(RegistryEntry {
-        id: "processes".into(),
-        category: "processes".into(),
-        subtype: "system".into(),
-        metadata: get_processes_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
-
-    // Idle
-    entries.push(RegistryEntry {
-        id: "idle".into(),
-        category: "idle".into(),
-        subtype: "system".into(),
-        metadata: get_idle_json(),
-        path: std::path::PathBuf::new(),
-        exe_path: "".into(),
-    });
+    entries.push(RegistryEntry { id: "audio".into(),    category: "audio".into(),    subtype: "system".into(), metadata: get_audio_json(),    path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "time".into(),     category: "time".into(),     subtype: "system".into(), metadata: get_time_json(),     path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "keyboard".into(), category: "keyboard".into(), subtype: "system".into(), metadata: get_keyboard_json(), path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "mouse".into(),    category: "mouse".into(),    subtype: "system".into(), metadata: get_mouse_json(),    path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "power".into(),    category: "power".into(),    subtype: "system".into(), metadata: get_power_json(),    path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "idle".into(),     category: "idle".into(),     subtype: "system".into(), metadata: get_idle_json(),     path: std::path::PathBuf::new(), exe_path: "".into() });
 
     entries
+}
+
+/// Pull only slow-tier sysdata (expensive calls: cpu, gpu, ram, storage, network, bluetooth, wifi, system, processes).
+pub fn pull_sysdata_slow() -> Vec<RegistryEntry> {
+    use crate::ipc::sysdata::{
+        cpu::get_cpu_json,
+        gpu::get_gpu_json,
+        ram::get_ram_json,
+        storage::get_storage_json,
+        network::get_network_json,
+        bluetooth::get_bluetooth_json,
+        wifi::get_wifi_json,
+        system::get_system_json,
+        processes::get_processes_json,
+    };
+
+    let mut entries = Vec::new();
+
+    entries.push(RegistryEntry { id: "cpu".into(),       category: "cpu".into(),       subtype: "system".into(), metadata: get_cpu_json(),       path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "ram".into(),       category: "ram".into(),       subtype: "system".into(), metadata: get_ram_json(),       path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "gpu".into(),       category: "gpu".into(),       subtype: "system".into(), metadata: get_gpu_json(),       path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "storage".into(),   category: "storage".into(),   subtype: "system".into(), metadata: get_storage_json(),   path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "network".into(),   category: "network".into(),   subtype: "system".into(), metadata: get_network_json(),   path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "bluetooth".into(), category: "bluetooth".into(), subtype: "system".into(), metadata: get_bluetooth_json(), path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "wifi".into(),      category: "wifi".into(),      subtype: "system".into(), metadata: get_wifi_json(),      path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "system".into(),    category: "system".into(),    subtype: "system".into(), metadata: get_system_json(),    path: std::path::PathBuf::new(), exe_path: "".into() });
+    entries.push(RegistryEntry { id: "processes".into(), category: "processes".into(), subtype: "system".into(), metadata: get_processes_json(), path: std::path::PathBuf::new(), exe_path: "".into() });
+
+    entries
+}
+
+/// Pull ALL sysdata (both tiers combined). Used for initial build & full reload.
+pub fn pull_sysdata() -> Vec<RegistryEntry> {
+    let mut entries = pull_sysdata_fast();
+    entries.extend(pull_sysdata_slow());
+    entries
+}
+
+/// Merge a partial tier update into the existing sysdata vec.
+/// Entries whose category belongs to `tier_categories` are replaced; the rest are kept.
+pub fn merge_sysdata_tier(existing: &[RegistryEntry], fresh: Vec<RegistryEntry>, tier_categories: &[&str]) -> Vec<RegistryEntry> {
+    let mut merged: Vec<RegistryEntry> = existing
+        .iter()
+        .filter(|e| !tier_categories.iter().any(|c| e.category.eq_ignore_ascii_case(c)))
+        .cloned()
+        .collect();
+    merged.extend(fresh);
+    merged
 }
 
 pub fn pull_appdata() -> Vec<RegistryEntry> {
