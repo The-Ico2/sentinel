@@ -1,13 +1,14 @@
 use serde_json::{Value, json};
 use std::process::{Command, Stdio};
-use sysinfo::System;
+use sysinfo::{System, ProcessesToUpdate};
 use crate::{info, error};
 use crate::ipc::registry::global_registry;
 use super::utils::registry_entry_to_addon;
 
 /// Check if an addon is already running by matching exe path or process name.
 fn is_addon_running(addon: &crate::Addon) -> bool {
-    let sys = System::new_all();
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
     for (_pid, proc_) in sys.processes() {
         if let Some(exe) = proc_.exe() {
             if exe == addon.exe_path.as_path() {

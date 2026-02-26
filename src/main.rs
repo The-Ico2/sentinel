@@ -3,7 +3,6 @@
 #![windows_subsystem = "windows"]
 
 mod logging;
-mod custom;
 mod cli;
 mod paths;
 mod ipc;
@@ -55,22 +54,18 @@ impl SentinelDaemon {
 
     pub fn run(&self) {
         info!("Starting SentinelDaemon");
-
-        // Load backend config (config.yaml)
         info!("Loading backend config");
+
         let cfg = crate::config::load_config();
+
         info!("Data pull rates: fast={}ms slow={}ms, paused: {}, refresh_on_request: {}",
             cfg.fast_pull_rate_ms, cfg.slow_pull_rate_ms, cfg.data_pull_paused, cfg.refresh_on_request);
 
-        // Start registry manager
+        // 1. Quick registry init — discovers addons/assets only (< 100ms)
         info!("Starting registry manager");
         registry_manager();
 
-        // Start live sysdata/appdata updater
-        info!("Starting live data updater");
-        crate::ipc::data_updater::start_registry_updater();
-
-        // Start IPC server in a separate thread
+        // 2. IPC server up immediately so tray & addons can connect
         info!("Spawning IPC server thread");
         std::thread::spawn(|| {
             info!("IPC server thread running");
@@ -78,8 +73,15 @@ impl SentinelDaemon {
             info!("IPC server thread terminated");
         });
 
-        info!("Starting configured addon autostarts");
-        start_configured_autostart_addons();
+        // 3. Data updater threads populate sysdata in the background
+        info!("Starting live data updater");
+        crate::ipc::data_updater::start_registry_updater();
+
+        info!("Starting configured addon autostarts (background)");
+
+        std::thread::spawn(|| {
+            start_configured_autostart_addons();
+        });
 
         // Start system tray
         info!("Starting system tray");

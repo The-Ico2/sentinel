@@ -13,7 +13,6 @@ use std::{
 use crate::{
     info, warn, error,
     paths::sentinel_root_dir,
-    ipc::appdata::window::ActiveWindowManager,
 };
 
 static LAST_REGISTRY_WRITE: OnceLock<RwLock<Instant>> = OnceLock::new();
@@ -242,9 +241,25 @@ pub fn pull_sysdata_fast() -> Vec<RegistryEntry> {
 }
 
 /// Pull only slow-tier sysdata (expensive calls: cpu, gpu, ram, storage, network, bluetooth, wifi, system, processes).
+pub fn pull_sysdata_cpu() -> RegistryEntry {
+    use crate::ipc::sysdata::cpu::get_cpu_json;
+
+    RegistryEntry {
+        id: "cpu".into(),
+        category: "cpu".into(),
+        subtype: "system".into(),
+        metadata: get_cpu_json(),
+        path: std::path::PathBuf::new(),
+        exe_path: "".into(),
+    }
+}
+
+/// Pull slow-tier sysdata that is heavier/less latency-sensitive than CPU.
+/// CPU is collected in its own updater loop so it can honor configured
+/// collection rates even when other slow probes block.
 pub fn pull_sysdata_slow() -> Vec<RegistryEntry> {
+    use std::thread;
     use crate::ipc::sysdata::{
-        cpu::get_cpu_json,
         gpu::get_gpu_json,
         ram::get_ram_json,
         storage::get_storage_json,
@@ -255,26 +270,44 @@ pub fn pull_sysdata_slow() -> Vec<RegistryEntry> {
         processes::get_processes_json,
     };
 
-    let mut entries = Vec::new();
+    // Run all slow-tier modules in parallel — each one spawns PowerShell /
+    // WMI queries that block for 1-5s.  By running concurrently the total
+    // wall-clock time is that of the slowest single module instead of the
+    // sum of all of them.
+    thread::scope(|s| {
+        let h_ram       = s.spawn(|| ("ram",       get_ram_json()));
+        let h_gpu       = s.spawn(|| ("gpu",       get_gpu_json()));
+        let h_storage   = s.spawn(|| ("storage",   get_storage_json()));
+        let h_network   = s.spawn(|| ("network",   get_network_json()));
+        let h_bluetooth = s.spawn(|| ("bluetooth", get_bluetooth_json()));
+        let h_wifi      = s.spawn(|| ("wifi",      get_wifi_json()));
+        let h_system    = s.spawn(|| ("system",    get_system_json()));
+        let h_processes = s.spawn(|| ("processes", get_processes_json()));
 
-    entries.push(RegistryEntry { id: "cpu".into(),       category: "cpu".into(),       subtype: "system".into(), metadata: get_cpu_json(),       path: std::path::PathBuf::new(), exe_path: "".into() });
-    entries.push(RegistryEntry { id: "ram".into(),       category: "ram".into(),       subtype: "system".into(), metadata: get_ram_json(),       path: std::path::PathBuf::new(), exe_path: "".into() });
-    entries.push(RegistryEntry { id: "gpu".into(),       category: "gpu".into(),       subtype: "system".into(), metadata: get_gpu_json(),       path: std::path::PathBuf::new(), exe_path: "".into() });
-    entries.push(RegistryEntry { id: "storage".into(),   category: "storage".into(),   subtype: "system".into(), metadata: get_storage_json(),   path: std::path::PathBuf::new(), exe_path: "".into() });
-    entries.push(RegistryEntry { id: "network".into(),   category: "network".into(),   subtype: "system".into(), metadata: get_network_json(),   path: std::path::PathBuf::new(), exe_path: "".into() });
-    entries.push(RegistryEntry { id: "bluetooth".into(), category: "bluetooth".into(), subtype: "system".into(), metadata: get_bluetooth_json(), path: std::path::PathBuf::new(), exe_path: "".into() });
-    entries.push(RegistryEntry { id: "wifi".into(),      category: "wifi".into(),      subtype: "system".into(), metadata: get_wifi_json(),      path: std::path::PathBuf::new(), exe_path: "".into() });
-    entries.push(RegistryEntry { id: "system".into(),    category: "system".into(),    subtype: "system".into(), metadata: get_system_json(),    path: std::path::PathBuf::new(), exe_path: "".into() });
-    entries.push(RegistryEntry { id: "processes".into(), category: "processes".into(), subtype: "system".into(), metadata: get_processes_json(), path: std::path::PathBuf::new(), exe_path: "".into() });
+        let results = [
+            h_ram.join(),
+            h_gpu.join(),
+            h_storage.join(),
+            h_network.join(),
+            h_bluetooth.join(),
+            h_wifi.join(),
+            h_system.join(),
+            h_processes.join(),
+        ];
 
-    entries
-}
-
-/// Pull ALL sysdata (both tiers combined). Used for initial build & full reload.
-pub fn pull_sysdata() -> Vec<RegistryEntry> {
-    let mut entries = pull_sysdata_fast();
-    entries.extend(pull_sysdata_slow());
-    entries
+        results
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .map(|(cat, metadata)| RegistryEntry {
+                id: cat.into(),
+                category: cat.into(),
+                subtype: "system".into(),
+                metadata,
+                path: std::path::PathBuf::new(),
+                exe_path: "".into(),
+            })
+            .collect()
+    })
 }
 
 /// Merge a partial tier update into the existing sysdata vec.
@@ -289,9 +322,6 @@ pub fn merge_sysdata_tier(existing: &[RegistryEntry], fresh: Vec<RegistryEntry>,
     merged
 }
 
-pub fn pull_appdata() -> Vec<RegistryEntry> {
-    ActiveWindowManager::enumerate_active_windows()
-}
 //
 // ---------- REGISTRY MANAGER ----------
 //
@@ -300,10 +330,14 @@ pub fn registry_manager() {
     let root = sentinel_root_dir();
     info!("Initializing registry at '{}'", root.display());
 
-    // Initial build
+    // Quick initial build — discover addons & assets only.
+    // Sysdata and appdata are populated by the data-updater threads that
+    // start immediately after, so the IPC server & tray come up fast.
     {
         let mut reg = global_registry().write().unwrap();
-        *reg = registry_build(&root);
+        let addons = discover_addons(&root.join("Addons"));
+        let assets = discover_assets(&root.join("Assets"));
+        *reg = Registry { addons, assets, sysdata: Vec::new(), appdata: Vec::new() };
         write_registry_json(&reg, &root);
         info!(
             "Registry initialized: {} addons, {} assets",
@@ -384,29 +418,17 @@ pub fn registry_watcher() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-//
-// ---------- BUILD / RELOAD ----------
-//
-
-pub fn registry_build(root: &Path) -> Registry {
-    info!("Building registry from disk at '{}'", root.display());
-    let addons = discover_addons(&root.join("Addons"));
-    let assets = discover_assets(&root.join("Assets"));
-    let sysdata = pull_sysdata();
-    let appdata = pull_appdata();
-
-    info!("Built registry: {} addons, {} assets", addons.len(), assets.len());
-
-    Registry { addons, assets, sysdata, appdata }
-}
-
 fn reload_registry(root: &Path) {
     info!("Reloading registry...");
-    let new_registry = registry_build(root);
+    let addons = discover_addons(&root.join("Addons"));
+    let assets = discover_assets(&root.join("Assets"));
 
     {
         let mut reg = global_registry().write().unwrap();
-        *reg = new_registry;
+        // Re-discover addons & assets; keep current sysdata & appdata
+        // (managed by the data-updater threads).
+        reg.addons = addons;
+        reg.assets = assets;
         write_registry_json(&reg, root);
     }
 

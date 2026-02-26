@@ -27,7 +27,7 @@ pub struct BackendConfig {
     pub data_pull_paused: bool,
 
     /// Whether to refresh fast-tier data inline on every IPC sysdata request.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub refresh_on_request: bool,
 
     // -- back-compat: silently absorb the old single-rate field if present --
@@ -37,8 +37,8 @@ pub struct BackendConfig {
 }
 
 fn default_fast_rate() -> u64 { 50 }
-fn default_slow_rate() -> u64 { 500 }
-fn default_true()      -> bool { true }
+fn default_slow_rate() -> u64 { 1000 }
+fn default_false()     -> bool { false }
 
 impl Default for BackendConfig {
     fn default() -> Self {
@@ -46,7 +46,7 @@ impl Default for BackendConfig {
             fast_pull_rate_ms: default_fast_rate(),
             slow_pull_rate_ms: default_slow_rate(),
             data_pull_paused: false,
-            refresh_on_request: default_true(),
+            refresh_on_request: default_false(),
             data_pull_rate_ms: None,
         }
     }
@@ -55,9 +55,9 @@ impl Default for BackendConfig {
 // ── Runtime atomics so the updater threads can read without locking ──
 
 static FAST_PULL_RATE_MS: AtomicU64  = AtomicU64::new(50);
-static SLOW_PULL_RATE_MS: AtomicU64  = AtomicU64::new(500);
+static SLOW_PULL_RATE_MS: AtomicU64  = AtomicU64::new(1000);
 static PULL_PAUSED:       AtomicBool = AtomicBool::new(false);
-static REFRESH_ON_REQ:    AtomicBool = AtomicBool::new(true);
+static REFRESH_ON_REQ:    AtomicBool = AtomicBool::new(false);
 
 pub fn fast_pull_rate_ms() -> u64    { FAST_PULL_RATE_MS.load(Ordering::Relaxed) }
 pub fn slow_pull_rate_ms() -> u64    { SLOW_PULL_RATE_MS.load(Ordering::Relaxed) }

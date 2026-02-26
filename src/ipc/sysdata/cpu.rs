@@ -1,61 +1,97 @@
 // ~/sentinel/sentinel-backend/src/ipc/sysdata/cpu.rs
 
 use serde_json::{json, Value};
+use std::cell::RefCell;
 use std::os::windows::process::CommandExt;
 use std::process::Command;
 use sysinfo::Components;
+use sysinfo::ProcessesToUpdate;
 use sysinfo::System;
+use windows::Win32::Foundation::FILETIME;
+use windows::Win32::System::Threading::GetSystemTimes;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-pub fn get_cpu_json() -> Value {
-	let mut sys = System::new_all();
-	sys.refresh_all();
+thread_local! {
+    static CPU_SYS: RefCell<System> = RefCell::new({
+        let mut sys = System::new();
+        sys.refresh_cpu_all();
+        sys.refresh_processes(ProcessesToUpdate::All, true);
+        sys
+    });
+	static CPU_TIMES: RefCell<Option<(u64, u64, u64)>> = const { RefCell::new(None) };
+}
 
-	let cpus = sys.cpus();
-	let logical_cores = cpus.len();
+pub fn get_cpu_json() -> Value {
+	let (logical_cores, avg_usage, avg_frequency_mhz, brand, vendor_id, per_core, process_count) =
+		CPU_SYS.with(|cell| {
+			let mut sys = cell.borrow_mut();
+
+			// CPU usage in sysinfo is delta-based. Reusing the same System instance
+			// across pulls yields stable task-manager-like readings.
+			sys.refresh_cpu_all();
+			sys.refresh_processes(ProcessesToUpdate::All, true);
+
+			let cpus = sys.cpus();
+			let logical_cores = cpus.len();
+
+			let avg_usage = if cpus.is_empty() {
+				0.0
+			} else {
+				cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
+			};
+
+			let avg_frequency_mhz = if cpus.is_empty() {
+				0u64
+			} else {
+				cpus.iter().map(|c| c.frequency()).sum::<u64>() / cpus.len() as u64
+			};
+
+			let brand = cpus
+				.first()
+				.map(|c| c.brand().to_string())
+				.unwrap_or_else(|| "unknown".to_string());
+
+			let vendor_id = cpus
+				.first()
+				.map(|c| c.vendor_id().to_string())
+				.unwrap_or_else(|| "unknown".to_string());
+
+			let per_core: Vec<Value> = cpus
+				.iter()
+				.enumerate()
+				.map(|(i, c)| {
+					json!({
+						"core_id": i,
+						"usage_percent": c.cpu_usage(),
+						"frequency_mhz": c.frequency(),
+					})
+				})
+				.collect();
+
+			let process_count = sys.processes().len();
+
+			(
+				logical_cores,
+				avg_usage,
+				avg_frequency_mhz,
+				brand,
+				vendor_id,
+				per_core,
+				process_count,
+			)
+		});
+
 	let physical_cores = System::physical_core_count().unwrap_or(0);
 
-	let avg_usage = if cpus.is_empty() {
-		0.0
-	} else {
-		cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
-	};
-
-	let avg_frequency_mhz = if cpus.is_empty() {
-		0u64
-	} else {
-		cpus.iter().map(|c| c.frequency()).sum::<u64>() / cpus.len() as u64
-	};
-
-	let brand = cpus
-		.first()
-		.map(|c| c.brand().to_string())
-		.unwrap_or_else(|| "unknown".to_string());
-
-	let vendor_id = cpus
-		.first()
-		.map(|c| c.vendor_id().to_string())
-		.unwrap_or_else(|| "unknown".to_string());
-
-	let per_core: Vec<Value> = cpus
-		.iter()
-		.enumerate()
-		.map(|(i, c)| {
-			json!({
-				"core_id": i,
-				"usage_percent": c.cpu_usage(),
-				"frequency_mhz": c.frequency(),
-			})
-		})
-		.collect();
+	let usage_percent = query_system_cpu_usage_percent()
+		.or_else(query_perf_cpu_usage_percent)
+		.unwrap_or(avg_usage);
 
 	let cpu_temp = get_cpu_temperature_json();
 
 	let uptime_seconds = System::uptime();
 	let boot_time_unix = System::boot_time();
-
-	let process_count = sys.processes().len();
 
 	let arch = std::env::consts::ARCH;
 
@@ -68,7 +104,7 @@ pub fn get_cpu_json() -> Value {
 		"arch": arch,
 		"logical_cores": logical_cores,
 		"physical_cores": physical_cores,
-		"usage_percent": avg_usage,
+		"usage_percent": usage_percent,
 		"frequency_mhz": avg_frequency_mhz,
 		"base_frequency_mhz": cpu_details.get("base_frequency_mhz").cloned().unwrap_or(Value::Null),
 		"max_frequency_mhz": cpu_details.get("max_frequency_mhz").cloned().unwrap_or(Value::Null),
@@ -243,6 +279,80 @@ if ($samples) {
 	} else {
 		Some(values.iter().sum::<f32>() / values.len() as f32)
 	}
+}
+
+fn query_system_cpu_usage_percent() -> Option<f32> {
+	fn ft_to_u64(ft: FILETIME) -> u64 {
+		((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
+	}
+
+	unsafe {
+		let mut idle = FILETIME::default();
+		let mut kernel = FILETIME::default();
+		let mut user = FILETIME::default();
+
+		if GetSystemTimes(Some(&mut idle), Some(&mut kernel), Some(&mut user)).is_err() {
+			return None;
+		}
+
+		let idle_now = ft_to_u64(idle);
+		let kernel_now = ft_to_u64(kernel);
+		let user_now = ft_to_u64(user);
+
+		CPU_TIMES.with(|cell| {
+			let mut prev = cell.borrow_mut();
+			if let Some((idle_prev, kernel_prev, user_prev)) = *prev {
+				let idle_delta = idle_now.saturating_sub(idle_prev);
+				let kernel_delta = kernel_now.saturating_sub(kernel_prev);
+				let user_delta = user_now.saturating_sub(user_prev);
+				let total_delta = kernel_delta.saturating_add(user_delta);
+
+				*prev = Some((idle_now, kernel_now, user_now));
+
+				if total_delta == 0 {
+					return None;
+				}
+
+				let busy = total_delta.saturating_sub(idle_delta);
+				let pct = (busy as f64 * 100.0 / total_delta as f64) as f32;
+				Some(pct.clamp(0.0, 100.0))
+			} else {
+				*prev = Some((idle_now, kernel_now, user_now));
+				None
+			}
+		})
+	}
+}
+
+fn query_perf_cpu_usage_percent() -> Option<f32> {
+	let script = r#"$ErrorActionPreference='SilentlyContinue';
+$sample = Get-Counter '\Processor(_Total)\% Processor Time' -ErrorAction SilentlyContinue |
+	Select-Object -ExpandProperty CounterSamples |
+	Select-Object -First 1 -ExpandProperty CookedValue;
+if ($sample -ne $null) {
+	$sample.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+}"#;
+
+	let output = Command::new("powershell")
+		.creation_flags(CREATE_NO_WINDOW)
+		.args(["-NoProfile", "-NonInteractive", "-Command", script])
+		.output()
+		.ok()?;
+
+	if !output.status.success() {
+		return None;
+	}
+
+	let text = String::from_utf8_lossy(&output.stdout);
+	for line in text.lines() {
+		if let Ok(v) = line.trim().parse::<f32>() {
+			if v.is_finite() {
+				return Some(v.clamp(0.0, 100.0));
+			}
+		}
+	}
+
+	None
 }
 
 /// Query CPU details not available from sysinfo: base speed, caches, sockets, virtualization, handles.

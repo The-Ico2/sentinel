@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::{HashMap, HashSet}, path::{Path, PathBuf}};
+use std::{borrow::Cow, collections::{HashMap, HashSet}, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 
 use eframe::{App, NativeOptions, egui};
 use egui::{Color32, RichText, Stroke, TextureHandle, TextureOptions};
@@ -95,6 +95,7 @@ struct WallpaperShellData {
     pause_maximized: Option<String>,
     pause_fullscreen: Option<String>,
     pause_battery: Option<String>,
+    pause_idle_timeout_ms: Option<i64>,
     pause_check_interval_ms: Option<i64>,
     // settings.performance.watcher
     watcher_enabled: Option<bool>,
@@ -171,6 +172,8 @@ struct ShellIpcMessage {
     key: Option<String>,
     // For wallpaper_save_editable / wallpaper_capture_preview
     manifest_path: Option<String>,
+    // For ui_view_mode
+    view_mode: Option<String>,
 }
 
 fn parse_shell_ipc_message(body: &str) -> Option<ShellIpcMessage> {
@@ -313,11 +316,7 @@ pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::err
         }
     }
 
-    let addon_state = if addon_catalog.is_empty() {
-        None
-    } else {
-        Some(load_addon_state(addon_catalog[selected].clone())?)
-    };
+    let addon_state = None;
 
     let app = SentinelApp {
         section: if addon_focus.is_some() {
@@ -361,6 +360,11 @@ fn run_sentinel_custom_tabs_shell(
                 return Ok(());
         }
 
+        // Load backend config so the UI process has the persisted values
+        // (atomics + on-disk config.yaml). This also initialises the
+        // crate::config accessors used for the data-tab poll rate.
+        crate::config::load_config();
+
         let selected_addon_id = addon_focus
                 .and_then(|focus| {
                         addons
@@ -395,6 +399,9 @@ fn run_sentinel_custom_tabs_shell(
                 .map_err(|e| format!("Failed to create Sentinel shell window: {}", e))?;
 
         let protocol_root = sentinel_home.clone();
+        let ui_view_mode = Arc::new(Mutex::new("addon".to_string()));
+        let ui_view_mode_ipc = Arc::clone(&ui_view_mode);
+
         let webview = WebViewBuilder::new()
                 .with_custom_protocol("sentinel".to_string(), move |_webview_id, request| {
                     let uri = request.uri().to_string();
@@ -480,8 +487,9 @@ fn run_sentinel_custom_tabs_shell(
                     })();
                     "#.to_string()
                 )
-                .with_ipc_handler(|request| {
+                .with_ipc_handler(move |request| {
                     let payload = request.body().to_string();
+                    let ui_view_mode_ipc = Arc::clone(&ui_view_mode_ipc);
                     warn!("[ui] IPC handler invoked, payload length={}", payload.len());
                     let result = std::panic::catch_unwind(move || {
                         let Some(message) = parse_shell_ipc_message(&payload) else {
@@ -546,29 +554,52 @@ fn run_sentinel_custom_tabs_shell(
                                 let key = message.key.unwrap_or_default();
                                 let value = message.value.unwrap_or(serde_json::Value::Null);
                                 warn!("[ui] Backend setting update: {}={}", key, value);
-                                match key.as_str() {
+
+                                // Forward to the daemon process via IPC so its
+                                // runtime atomics are updated (the UI is a
+                                // separate process — local config::set_* only
+                                // touches the UI process's memory + disk).
+                                let (cmd, args) = match key.as_str() {
                                     "fast_pull_rate" => {
                                         if let Some(ms) = value.as_u64() {
-                                            crate::config::set_fast_pull_rate_ms(ms);
-                                        }
+                                            ("set_fast_pull_rate", serde_json::json!({"rate_ms": ms}))
+                                        } else { return; }
                                     }
                                     "slow_pull_rate" => {
                                         if let Some(ms) = value.as_u64() {
-                                            crate::config::set_slow_pull_rate_ms(ms);
-                                        }
+                                            ("set_slow_pull_rate", serde_json::json!({"rate_ms": ms}))
+                                        } else { return; }
                                     }
                                     "pull_paused" => {
                                         if let Some(paused) = value.as_bool() {
-                                            crate::config::set_pull_paused(paused);
-                                        }
+                                            ("set_pull_paused", serde_json::json!({"paused": paused}))
+                                        } else { return; }
                                     }
                                     "refresh_on_request" => {
                                         if let Some(enabled) = value.as_bool() {
-                                            crate::config::set_refresh_on_request(enabled);
-                                        }
+                                            ("set_refresh_on_request", serde_json::json!({"enabled": enabled}))
+                                        } else { return; }
                                     }
                                     _ => {
                                         warn!("[ui] Unknown backend setting key: {}", key);
+                                        return;
+                                    }
+                                };
+
+                                let req = crate::ipc::request::IpcRequest {
+                                    ns: "backend".to_string(),
+                                    cmd: cmd.to_string(),
+                                    args: Some(args),
+                                };
+                                match crate::ipc::request::send_ipc_request(req) {
+                                    Ok(resp) if resp.ok => {
+                                        warn!("[ui] Daemon acknowledged setting {}={}", key, value);
+                                    }
+                                    Ok(resp) => {
+                                        warn!("[ui] Daemon rejected setting: {:?}", resp.error);
+                                    }
+                                    Err(e) => {
+                                        warn!("[ui] Failed to send setting to daemon: {}", e);
                                     }
                                 }
                             }
@@ -590,6 +621,13 @@ fn run_sentinel_custom_tabs_shell(
                                     Err(e) => warn!("[ui] Preview capture failed: {}", e),
                                 }
                             }
+                            "ui_view_mode" => {
+                                if let Some(mode) = message.view_mode {
+                                    if let Ok(mut guard) = ui_view_mode_ipc.lock() {
+                                        *guard = mode.to_lowercase();
+                                    }
+                                }
+                            }
                             other => {
                                 warn!("[ui] Unhandled IPC message kind: '{}'", other);
                             }
@@ -606,16 +644,35 @@ fn run_sentinel_custom_tabs_shell(
         let mut last_monitor_poll = std::time::Instant::now();
         let mut cached_monitor_json = String::new();
         let mut cached_registry_json = String::new();
+        let mut cached_config_json = String::new();
         let mut last_registry_push = std::time::Instant::now();
+        let mut last_config_push = std::time::Instant::now();
         let snapshot_home = sentinel_home.clone();
 
         event_loop.run(move |event, _, control_flow| {
+                const UI_POLL_MS_ACTIVE_DATA: u64 = 500;
+            const UI_POLL_MS_ACTIVE_ADDON: u64 = 900;
+                const UI_POLL_MS_IDLE: u64 = 750;
+                let current_view_mode = ui_view_mode
+                    .lock()
+                    .map(|mode| mode.clone())
+                    .unwrap_or_else(|_| "addon".to_string());
+                let data_view_active = current_view_mode == "data";
+                let addon_view_active = current_view_mode == "addon";
+                let ui_poll_ms = if data_view_active {
+                    UI_POLL_MS_ACTIVE_DATA
+                } else {
+                    UI_POLL_MS_IDLE
+                };
+
                 *control_flow = ControlFlow::WaitUntil(
-                    std::time::Instant::now() + std::time::Duration::from_millis(500)
+                    std::time::Instant::now() + std::time::Duration::from_millis(ui_poll_ms)
                 );
 
                 // Periodic monitor polling for live UI updates (every 2s)
-                if last_monitor_poll.elapsed() >= std::time::Duration::from_millis(2000) {
+                if addon_view_active
+                    && last_monitor_poll.elapsed() >= std::time::Duration::from_millis(2000)
+                {
                     last_monitor_poll = std::time::Instant::now();
                     let fresh_monitors: Vec<WallpaperShellMonitor> = MonitorManager::enumerate_monitors()
                         .into_iter()
@@ -640,11 +697,42 @@ fn run_sentinel_custom_tabs_shell(
                     }
                 }
 
-                // Push live registry data to the Data page (every 500ms).
+                // Push config to JS so the Settings page can show persisted values.
+                // Read from disk each time since the daemon (a separate process)
+                // is the one updating config.yaml — our in-memory config is stale.
+                if last_config_push.elapsed() >= std::time::Duration::from_secs(2) {
+                    last_config_push = std::time::Instant::now();
+                    let config_path = snapshot_home.join("config.yaml");
+                    if let Ok(yaml_text) = std::fs::read_to_string(&config_path) {
+                        if let Ok(cfg) = serde_yaml::from_str::<crate::config::BackendConfig>(&yaml_text) {
+                            if let Ok(cfg_json) = serde_json::to_string(&cfg) {
+                                if cfg_json != cached_config_json {
+                                    cached_config_json = cfg_json.clone();
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.__sentinelConfig={};if(typeof __sentinelOnConfigPush==='function')__sentinelOnConfigPush(window.__sentinelConfig);",
+                                        cfg_json
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Push live registry data to the Data page.
                 // The UI runs in a separate process from the backend daemon,
                 // so global_registry() here is empty. Read the registry.json
                 // snapshot that the daemon writes to disk instead.
-                if last_registry_push.elapsed() >= std::time::Duration::from_millis(500) {
+                let registry_poll_ms = if data_view_active {
+                    UI_POLL_MS_ACTIVE_DATA
+                } else if addon_view_active {
+                    UI_POLL_MS_ACTIVE_ADDON
+                } else {
+                    0
+                };
+
+                if registry_poll_ms > 0
+                    && last_registry_push.elapsed() >= std::time::Duration::from_millis(registry_poll_ms)
+                {
                     last_registry_push = std::time::Instant::now();
                     let registry_path = snapshot_home.join("registry.json");
                     if let Ok(json_str) = std::fs::read_to_string(&registry_path) {
@@ -937,6 +1025,7 @@ fn build_wallpaper_shell_data(addon: &AddonMeta, sentinel_home: &Path) -> Option
         pause_maximized: yaml_string(&config_root, "settings.performance.pausing.maximized"),
         pause_fullscreen: yaml_string(&config_root, "settings.performance.pausing.fullscreen"),
         pause_battery: yaml_string(&config_root, "settings.performance.pausing.battery"),
+        pause_idle_timeout_ms: yaml_i64(&config_root, "settings.performance.pausing.idle_timeout_ms"),
         pause_check_interval_ms: yaml_i64(&config_root, "settings.performance.pausing.check_interval_ms"),
         // settings.performance.watcher
         watcher_enabled: yaml_bool(&config_root, "settings.performance.watcher.enabled"),
@@ -2435,6 +2524,11 @@ fn build_sentinel_custom_tabs_shell_html(
         }}
 
         function renderSettingsPage() {{
+            var cfg = window.__sentinelConfig || {{}};
+            var fastRate = cfg.fast_pull_rate_ms || 50;
+            var slowRate = cfg.slow_pull_rate_ms || 500;
+            var rorChecked = cfg.refresh_on_request !== false;
+            var pauseChecked = cfg.data_pull_paused === true;
             const header = document.getElementById('page-header');
             const content = document.getElementById('page-content');
             header.innerHTML = '<h2>Settings</h2><p style="color:var(--text-dim);margin:4px 0 0;">Backend configuration</p>';
@@ -2443,27 +2537,27 @@ fn build_sentinel_custom_tabs_shell_html(
                     '<h3>Data Collection — Fast Tier</h3>' +
                     '<p style="color:var(--text-dim);font-size:12px;margin:2px 0 8px;">Lightweight data: audio, time, keyboard, mouse, idle, power, display</p>' +
                     '<div class="setting-row"><span class="s-label">Fast Pull Rate (ms)</span>' +
-                        '<input type="number" id="cfg-fast-rate" class="s-input" value="50" min="10" max="5000" step="10">' +
+                        '<input type="number" id="cfg-fast-rate" class="s-input" value="' + fastRate + '" min="10" max="5000" step="10">' +
                     '</div>' +
                 '</div>' +
                 '<div class="page-settings-group">' +
                     '<h3>Data Collection — Slow Tier</h3>' +
                     '<p style="color:var(--text-dim);font-size:12px;margin:2px 0 8px;">Heavyweight data: CPU, GPU, RAM, storage, network, bluetooth, wifi, system, processes</p>' +
                     '<div class="setting-row"><span class="s-label">Slow Pull Rate (ms)</span>' +
-                        '<input type="number" id="cfg-slow-rate" class="s-input" value="500" min="100" max="10000" step="100">' +
+                        '<input type="number" id="cfg-slow-rate" class="s-input" value="' + slowRate + '" min="100" max="10000" step="100">' +
                     '</div>' +
                 '</div>' +
                 '<div class="page-settings-group">' +
                     '<h3>Streaming</h3>' +
                     '<div class="setting-row"><span class="s-label">Refresh on Request</span>' +
-                        '<label class="s-toggle"><input type="checkbox" id="cfg-refresh-on-req" checked><span class="s-slider"></span></label>' +
+                        '<label class="s-toggle"><input type="checkbox" id="cfg-refresh-on-req"' + (rorChecked ? ' checked' : '') + '><span class="s-slider"></span></label>' +
                     '</div>' +
                     '<p style="color:var(--text-dim);font-size:12px;margin:2px 0 8px;">When enabled, fast-tier data is refreshed inline on every IPC request for lowest latency</p>' +
                 '</div>' +
                 '<div class="page-settings-group">' +
                     '<h3>Pause</h3>' +
                     '<div class="setting-row"><span class="s-label">Pause All Collection</span>' +
-                        '<label class="s-toggle"><input type="checkbox" id="cfg-pull-paused"><span class="s-slider"></span></label>' +
+                        '<label class="s-toggle"><input type="checkbox" id="cfg-pull-paused"' + (pauseChecked ? ' checked' : '') + '><span class="s-slider"></span></label>' +
                     '</div>' +
                 '</div>' +
                 '<div class="page-settings-group">' +
@@ -2482,6 +2576,8 @@ fn build_sentinel_custom_tabs_shell_html(
                 clearTimeout(fastTimer);
                 var v = Number(fastEl.value);
                 fastTimer = setTimeout(function() {{
+                    if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
+                    window.__sentinelConfig.fast_pull_rate_ms = v;
                     window.__sentinelBridgePost({{ type: 'backend_setting', key: 'fast_pull_rate', value: v }});
                 }}, 400);
             }});
@@ -2489,21 +2585,48 @@ fn build_sentinel_custom_tabs_shell_html(
                 clearTimeout(slowTimer);
                 var v = Number(slowEl.value);
                 slowTimer = setTimeout(function() {{
+                    if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
+                    window.__sentinelConfig.slow_pull_rate_ms = v;
                     window.__sentinelBridgePost({{ type: 'backend_setting', key: 'slow_pull_rate', value: v }});
                 }}, 400);
             }});
             if (rorEl) rorEl.addEventListener('change', function() {{
+                if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
+                window.__sentinelConfig.refresh_on_request = rorEl.checked;
                 window.__sentinelBridgePost({{ type: 'backend_setting', key: 'refresh_on_request', value: rorEl.checked }});
             }});
             if (pauseEl) pauseEl.addEventListener('change', function() {{
+                if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
+                window.__sentinelConfig.data_pull_paused = pauseEl.checked;
                 window.__sentinelBridgePost({{ type: 'backend_setting', key: 'pull_paused', value: pauseEl.checked }});
             }});
         }}
 
+        window.__sentinelOnConfigPush = function(cfg) {{
+            window.__sentinelConfig = cfg || {{}};
+            if (viewMode !== 'settings') return;
+
+            var fastEl = document.getElementById('cfg-fast-rate');
+            var slowEl = document.getElementById('cfg-slow-rate');
+            var rorEl = document.getElementById('cfg-refresh-on-req');
+            var pauseEl = document.getElementById('cfg-pull-paused');
+
+            var nextFast = Number((window.__sentinelConfig && window.__sentinelConfig.fast_pull_rate_ms) || 50);
+            var nextSlow = Number((window.__sentinelConfig && window.__sentinelConfig.slow_pull_rate_ms) || 500);
+            var nextRor = !!(window.__sentinelConfig && window.__sentinelConfig.refresh_on_request !== false);
+            var nextPaused = !!(window.__sentinelConfig && window.__sentinelConfig.data_pull_paused === true);
+
+            if (fastEl && Number(fastEl.value) !== nextFast) fastEl.value = String(nextFast);
+            if (slowEl && Number(slowEl.value) !== nextSlow) slowEl.value = String(nextSlow);
+            if (rorEl && rorEl.checked !== nextRor) rorEl.checked = nextRor;
+            if (pauseEl && pauseEl.checked !== nextPaused) pauseEl.checked = nextPaused;
+        }};
+
         function renderDataPage() {{
             const header = document.getElementById('page-header');
             const content = document.getElementById('page-content');
-            header.innerHTML = '<h2>Data</h2><p style="color:var(--text-dim);margin:4px 0 0;"><span class="data-connection-dot live"></span>Live registry — updates every 500ms</p>';
+            var dataPollRate = (window.__sentinelConfig && window.__sentinelConfig.slow_pull_rate_ms) || 500;
+            header.innerHTML = '<h2>Data</h2><p style="color:var(--text-dim);margin:4px 0 0;"><span class="data-connection-dot live"></span>Live registry — updates every ' + dataPollRate + 'ms</p>';
             var chips = ['All','Hardware','Network','Input','System','App','JSON'];
             window.__dataActiveChip = window.__dataActiveChip || 'All';
             content.innerHTML =
@@ -2516,15 +2639,46 @@ fn build_sentinel_custom_tabs_shell_html(
                 chip.onclick = function() {{
                     window.__dataActiveChip = chip.textContent;
                     content.querySelectorAll('.data-filter-chip').forEach(function(c) {{ c.classList.toggle('active', c.textContent === window.__dataActiveChip); }});
-                    renderDataPanels(window.__lastRegistryData);
+                    scheduleDataPanelsRender(true);
                 }};
             }});
             // Render immediately if we already have data
             if (window.__lastRegistryData) {{
-                renderDataPanels(window.__lastRegistryData);
+                scheduleDataPanelsRender(true);
             }} else {{
                 document.getElementById('data-panels-container').innerHTML = '<div style="color:var(--text-dim);padding:20px;">Waiting for registry data\u2026</div>';
             }}
+        }}
+
+        const DATA_RENDER_MIN_INTERVAL_MS = 800;
+        window.__dataRenderTimer = null;
+        window.__dataRenderScheduled = false;
+        window.__lastDataRenderTs = 0;
+
+        function scheduleDataPanelsRender(force) {{
+            if (viewMode !== 'data' || !window.__lastRegistryData) return;
+            if (window.__dataScrollActive && !force) return;
+
+            var now = Date.now();
+            var elapsed = now - (window.__lastDataRenderTs || 0);
+            var delay = force ? 0 : Math.max(0, DATA_RENDER_MIN_INTERVAL_MS - elapsed);
+
+            if (window.__dataRenderTimer) clearTimeout(window.__dataRenderTimer);
+            window.__dataRenderTimer = setTimeout(function() {{
+                if (window.__dataRenderScheduled) return;
+                window.__dataRenderScheduled = true;
+                requestAnimationFrame(function() {{
+                    window.__dataRenderScheduled = false;
+                    window.__dataRenderTimer = null;
+                    if (viewMode !== 'data' || !window.__lastRegistryData) return;
+
+                    var scroller = document.querySelector('.page-content');
+                    var st = scroller ? scroller.scrollTop : 0;
+                    renderDataPanels(window.__lastRegistryData);
+                    if (scroller) scroller.scrollTop = st;
+                    window.__lastDataRenderTs = Date.now();
+                }});
+            }}, delay);
         }}
 
         // ── Panel icon SVGs ──
@@ -3045,9 +3199,27 @@ fn build_sentinel_custom_tabs_shell_html(
             window.__lastRegistryData = data;
             // Only update if the Data page is currently active
             if (viewMode === 'data') {{
-                renderDataPanels(data);
+                scheduleDataPanelsRender(false);
             }}
         }};
+
+        // Track user scroll activity so we can defer DOM updates
+        (function() {{
+            var timer = null;
+            var scroller = document.querySelector('.page-content');
+            if (!scroller) return;
+            scroller.addEventListener('scroll', function() {{
+                window.__dataScrollActive = true;
+                clearTimeout(timer);
+                timer = setTimeout(function() {{
+                    window.__dataScrollActive = false;
+                    // Catch-up render with latest data
+                    if (viewMode === 'data' && window.__lastRegistryData) {{
+                        scheduleDataPanelsRender(true);
+                    }}
+                }}, 400);
+            }}, {{ passive: true }});
+        }})();
 
         document.querySelectorAll('.quick-action-btn').forEach(function(btn) {{
             btn.addEventListener('click', function() {{
@@ -3063,17 +3235,25 @@ fn build_sentinel_custom_tabs_shell_html(
             renderAddons();
             var addonPanel = document.getElementById('right-addon-panel');
             var pagePanel = document.getElementById('right-page-panel');
+            var frame = document.getElementById('tabFrame');
             if (viewMode === 'addon') {{
                 addonPanel.style.display = 'flex';
                 pagePanel.style.display = 'none';
                 renderTabs();
             }} else {{
+                // Unload addon iframe while in Home/Settings/Data to reduce
+                // background script/layout cost from heavy addon pages.
+                if (frame && frame.src !== 'about:blank') frame.src = 'about:blank';
                 addonPanel.style.display = 'none';
                 pagePanel.style.display = 'flex';
                 if (viewMode === 'home') renderHomePage();
                 else if (viewMode === 'settings') renderSettingsPage();
-                else if (viewMode === 'data') renderDataPage();
+                else if (viewMode === 'data') {{
+                    renderDataPage();
+                    scheduleDataPanelsRender(true);
+                }}
             }}
+            window.__sentinelBridgePost({{ type: 'ui_view_mode', viewMode: viewMode }});
         }}
 
         render();

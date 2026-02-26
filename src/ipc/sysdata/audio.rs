@@ -1,7 +1,15 @@
 // ~/sentinel/sentinel-backend/src/ipc/sysdata/audio.rs
 
 use serde_json::{json, Value};
-use std::{cell::RefCell, collections::VecDeque};
+use std::{
+	cell::RefCell,
+	collections::VecDeque,
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		OnceLock, RwLock,
+	},
+	time::Duration,
+};
 use windows::Win32::{
 	Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
 	Media::Audio::{
@@ -52,6 +60,36 @@ thread_local! {
 /// How many `get_audio_json()` calls between full device re-queries.
 /// At 100 ms poll rate this is roughly every 5 seconds.
 const REFRESH_EVERY_N_CALLS: u32 = 50;
+
+/// Media session polling cadence. This runs on a dedicated background thread
+/// so media updates stay responsive even if audio pull cadence changes.
+const MEDIA_POLL_INTERVAL_MS: u64 = 200;
+
+static MEDIA_SESSION_CACHE: OnceLock<RwLock<Value>> = OnceLock::new();
+static MEDIA_POLLER_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn media_session_cache() -> &'static RwLock<Value> {
+	MEDIA_SESSION_CACHE.get_or_init(|| RwLock::new(json!({ "playing": false })))
+}
+
+fn start_media_poller_once() {
+	if MEDIA_POLLER_STARTED
+		.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+		.is_err()
+	{
+		return;
+	}
+
+	std::thread::spawn(|| {
+		loop {
+			let media = query_media_session();
+			if !media.is_null() {
+				*media_session_cache().write().unwrap() = media;
+			}
+			std::thread::sleep(Duration::from_millis(MEDIA_POLL_INTERVAL_MS));
+		}
+	});
+}
 
 struct BackendAudioState {
 	enumerator: IMMDeviceEnumerator,
@@ -147,6 +185,7 @@ pub fn get_audio_json() -> Value {
 	unsafe {
 		let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 	}
+	start_media_poller_once();
 
 	AUDIO_STATE.with(|cell| {
 		const HISTORY_LIMIT: usize = 64;
@@ -278,26 +317,9 @@ pub fn get_audio_json() -> Value {
 				"volume_percent": (input_volume * 100.0).round(),
 				"muted": input_muted,
 			},
-			"media_session": get_media_session_json(),
+			"media_session": media_session_cache().read().unwrap().clone(),
 		})
 	})
-}
-
-/// Query the currently playing media session via WinRT GSMTC API.
-/// Runs in a separate thread to avoid COM apartment conflicts.
-fn get_media_session_json() -> Value {
-	use std::sync::mpsc;
-
-	let (tx, rx) = mpsc::channel();
-	std::thread::spawn(move || {
-		let result = query_media_session();
-		let _ = tx.send(result);
-	});
-
-	match rx.recv_timeout(std::time::Duration::from_millis(500)) {
-		Ok(val) => val,
-		Err(_) => Value::Null,
-	}
 }
 
 fn query_media_session() -> Value {

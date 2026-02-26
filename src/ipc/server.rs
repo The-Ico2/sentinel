@@ -4,7 +4,7 @@ use windows::core::PCWSTR;
 use windows::Win32::{
     Foundation::{HANDLE, INVALID_HANDLE_VALUE, CloseHandle, GetLastError, ERROR_PIPE_CONNECTED},
     System::Pipes::*,
-    Storage::FileSystem::{ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES},
+    Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES},
 };
 
 use crate::{
@@ -13,7 +13,6 @@ use crate::{
         response::IpcResponse,
         dispatch::dispatch,
     },
-    custom::windows::WindowsCManager,
 };
 use crate::{info, warn, error};
 
@@ -26,9 +25,10 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 
+
+
 pub fn start_ipc_server() {
     info!("Starting IPC server on pipe '{}'", PIPE_NAME);
-    let windows = WindowsCManager::new();
 
     unsafe {
         loop {
@@ -55,9 +55,16 @@ pub fn start_ipc_server() {
             };
 
             if connected {
-                handle_client(pipe, &windows);
-                let _ = DisconnectNamedPipe(pipe);
-                let _ = CloseHandle(pipe);
+                // Spawn a handler thread so the accept loop immediately creates
+                // the next pipe instance.  This allows concurrent IPC clients
+                // (wallpaper polling + tray commands) without "pipe busy" errors.
+                let raw = pipe.0 as usize;           // pointer → integer (Send)
+                thread::spawn(move || {
+                    let pipe = HANDLE(raw as *mut _); // restore on worker thread
+                    handle_client(pipe);
+                    let _ = DisconnectNamedPipe(pipe);
+                    let _ = CloseHandle(pipe);
+                });
             } else {
                 warn!("Failed to connect named pipe; closing and retrying in 100ms");
                 let _ = CloseHandle(pipe);
@@ -67,7 +74,7 @@ pub fn start_ipc_server() {
     }
 }
 
-unsafe fn handle_client(pipe: HANDLE, windows: &WindowsCManager) {
+unsafe fn handle_client(pipe: HANDLE) {
     let mut buffer_vec = vec![0u8; BUFFER_SIZE as usize];
     let mut read = 0u32;
 
@@ -85,7 +92,7 @@ unsafe fn handle_client(pipe: HANDLE, windows: &WindowsCManager) {
         }
     };
 
-    let response = match dispatch(&windows, &req.ns, &req.cmd, req.args) {
+    let response = match dispatch(&req.ns, &req.cmd, req.args) {
         Ok(value) => IpcResponse::ok(value),
         Err(err) => {
             warn!("IPC dispatch error: {}", err);
@@ -104,5 +111,12 @@ unsafe fn send(pipe: HANDLE, resp: IpcResponse) {
     let mut written = 0u32;
     if WriteFile(pipe, Some(&bytes), Some(&mut written), None).is_err() {
         warn!("Failed to write IPC response");
+        return;
+    }
+
+    // Ensure the response is committed to the client side before the
+    // handler thread disconnects/closes this pipe instance.
+    if FlushFileBuffers(pipe).is_err() {
+        warn!("Failed to flush IPC response buffer");
     }
 }

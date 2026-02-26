@@ -22,12 +22,12 @@ use serde_json::{json, Value as JsonValue};
 
 #[cfg(target_os = "windows")]
 use windows::{
-    core::BOOL,
+    core::{w, BOOL},
     Win32::{
         Foundation::{HWND, LPARAM},
         UI::WindowsAndMessaging::{
-            EnumWindows, GetWindowThreadProcessId, SetForegroundWindow,
-            ShowWindow, IsWindowVisible, SW_RESTORE,
+            EnumWindows, FindWindowW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+            SetForegroundWindow, ShowWindow, SW_RESTORE,
         },
     },
 };
@@ -313,7 +313,7 @@ fn focus_process_window(target_pid: u32) -> bool {
         let data = &mut *(lparam.0 as *mut CallbackData);
         let mut proc_id: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut proc_id));
-        if proc_id == data.target_pid && IsWindowVisible(hwnd).as_bool() {
+        if proc_id == data.target_pid && (IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool()) {
             data.found_hwnd = hwnd;
             return BOOL(0); // stop enumeration
         }
@@ -335,6 +335,19 @@ fn focus_process_window(target_pid: u32) -> bool {
     false
 }
 
+#[cfg(target_os = "windows")]
+fn focus_sentinel_window_by_title() -> bool {
+    unsafe {
+        let hwnd = match FindWindowW(None, w!("Sentinel")) {
+            Ok(handle) => handle,
+            Err(_) => return false,
+        };
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = SetForegroundWindow(hwnd);
+        true
+    }
+}
+
 /// Open the Sentinel UI or bring the existing instance to focus.
 fn open_or_focus_ui(ui_child: &mut Option<Child>) {
     // Check if UI is already running
@@ -349,6 +362,10 @@ fn open_or_focus_ui(ui_child: &mut Option<Child>) {
                         info!("[ui] Brought existing Sentinel UI to focus");
                         return;
                     }
+                    if focus_sentinel_window_by_title() {
+                        info!("[ui] Focused existing Sentinel UI window by title fallback");
+                        return;
+                    }
                     warn!("[ui] UI process running but couldn't find/focus window");
                 }
                 return;
@@ -359,6 +376,15 @@ fn open_or_focus_ui(ui_child: &mut Option<Child>) {
             Err(e) => {
                 error!("[ui] Error checking UI process: {}", e);
             }
+        }
+    }
+
+    // Fallback: UI may already be running from another backend session.
+    #[cfg(target_os = "windows")]
+    {
+        if focus_sentinel_window_by_title() {
+            info!("[ui] Focused existing Sentinel UI window by title");
+            return;
         }
     }
 

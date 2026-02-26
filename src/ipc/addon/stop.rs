@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 use std::path::Path;
-use sysinfo::System;
+use sysinfo::{System, ProcessesToUpdate};
 use crate::{info, error, warn};
 use crate::ipc::registry::global_registry;
 use super::utils::registry_entry_to_addon;
@@ -18,7 +18,8 @@ pub fn stop_all() {
         return;
     }
 
-    let sys = System::new_all();
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
 
     for entry in &addon_entries {
         let addon = match registry_entry_to_addon(entry) {
@@ -29,6 +30,12 @@ pub fn stop_all() {
             }
         };
 
+        let exe_filename = addon.exe_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
         for (_pid, proc_) in sys.processes() {
             let mut matches = false;
 
@@ -36,7 +43,7 @@ pub fn stop_all() {
                 matches = true;
             }
 
-            if !matches && proc_.name().eq_ignore_ascii_case(&format!("{}.exe", addon.package)) {
+            if !matches && proc_.name().eq_ignore_ascii_case(&exe_filename) {
                 matches = true;
             }
 
@@ -75,8 +82,15 @@ pub fn stop(args: Option<Value>) -> Result<Value, String> {
 
     info!("Stopping addon '{}'", addon.name);
 
+    let exe_filename = addon.exe_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
     // Try OS-level process kill by exe path/name
-    let sys = System::new_all();
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
     let mut stopped = false;
 
     for (_pid, proc_) in sys.processes() {
@@ -87,9 +101,9 @@ pub fn stop(args: Option<Value>) -> Result<Value, String> {
             info!("Process matched by exe path: {}", addon.exe_path.display());
         }
 
-        if !matches && proc_.name().eq_ignore_ascii_case(&format!("{}.exe", addon.package)) {
+        if !matches && proc_.name().eq_ignore_ascii_case(&exe_filename) {
             matches = true;
-            info!("Process matched by name: {}.exe", addon.package);
+            info!("Process matched by name: {}", exe_filename);
         }
 
         if matches {

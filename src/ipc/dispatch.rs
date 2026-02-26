@@ -1,4 +1,3 @@
-use crate::custom::windows::WindowsCManager;
 use serde_json::Value;
 use crate::warn;
 
@@ -8,7 +7,6 @@ mod addond;
 mod backendd;
 
 pub fn dispatch(
-    _windows: &WindowsCManager, // currently unused, but kept for future commands
     ns: &str,
     cmd: &str,
     args: Option<Value>,

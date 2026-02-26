@@ -3,7 +3,7 @@
 use std::{thread, time::Duration};
 use crate::{
     ipc::registry::{
-        global_registry, pull_sysdata_fast, pull_sysdata_slow,
+        global_registry, pull_sysdata_cpu, pull_sysdata_fast, pull_sysdata_slow,
         merge_sysdata_tier, write_registry_json, FAST_CATEGORIES,
     },
     paths::sentinel_root_dir,
@@ -54,7 +54,42 @@ pub fn start_registry_updater() {
         }
     });
 
-    // ── Slow-tier thread (cpu, gpu, ram, storage, network, bluetooth, wifi, system, processes) ──
+    // ── CPU thread (honors configured slow rate independently) ──
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(10));
+
+        loop {
+            if pull_paused() {
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+
+            let rate = slow_pull_rate_ms();
+            let cpu_entry = pull_sysdata_cpu();
+            let mut changed = false;
+
+            {
+                let mut reg = global_registry().write().unwrap();
+                let merged = merge_sysdata_tier(&reg.sysdata, vec![cpu_entry], &["cpu"]);
+                if reg.sysdata != merged {
+                    reg.sysdata = merged;
+                    changed = true;
+                }
+            }
+
+            if changed {
+                let root = sentinel_root_dir();
+                let snapshot = global_registry().read().unwrap().clone();
+                write_registry_json(&snapshot, &root);
+            }
+
+            if rate > 0 {
+                thread::sleep(Duration::from_millis(rate));
+            }
+        }
+    });
+
+    // ── Slow-tier thread (gpu, ram, storage, network, bluetooth, wifi, system, processes) ──
     thread::spawn(move || {
         // Small offset so both threads don't write at exact same instant
         thread::sleep(Duration::from_millis(25));
@@ -67,7 +102,7 @@ pub fn start_registry_updater() {
 
             let rate = slow_pull_rate_ms();
             let slow_categories: Vec<&str> = vec![
-                "cpu", "gpu", "ram", "storage", "network",
+                "gpu", "ram", "storage", "network",
                 "bluetooth", "wifi", "system", "processes",
             ];
 
