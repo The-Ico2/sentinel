@@ -264,7 +264,7 @@ impl ActiveWindowManager {
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let has_frame = (style & (WS_CAPTION.0 | WS_THICKFRAME.0)) != 0;
 
-        let fullscreen = covers_monitor && !maximized && !has_frame;
+        let fullscreen = covers_monitor && !has_frame;
 
         let window_state = if fullscreen {
             "fullscreen"
