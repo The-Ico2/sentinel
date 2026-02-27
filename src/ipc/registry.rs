@@ -7,15 +7,14 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{OnceLock, RwLock, mpsc::channel},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use crate::{
     info, warn, error,
     paths::sentinel_root_dir,
 };
-
-static LAST_REGISTRY_WRITE: OnceLock<RwLock<Instant>> = OnceLock::new();
+use crate::ipc::data_updater::{demand_tracking_active, section_tracking_enabled};
 
 /// Single registry entry (addon, widget, etc)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -174,11 +173,13 @@ pub fn discover_assets(assets_root: &Path) -> Vec<RegistryEntry> {
 }
 
 /// Categories that belong to the **fast** (lightweight) tier.
+#[allow(dead_code)]
 pub const FAST_CATEGORIES: &[&str] = &[
     "time", "keyboard", "mouse", "audio", "idle", "power", "display",
 ];
 
 /// Pull only fast-tier sysdata (cheap calls: time, keyboard, mouse, audio, idle, power, display).
+#[allow(dead_code)]
 pub fn pull_sysdata_fast() -> Vec<RegistryEntry> {
     use crate::ipc::sysdata::{
         display::MonitorManager,
@@ -254,62 +255,6 @@ pub fn pull_sysdata_cpu() -> RegistryEntry {
     }
 }
 
-/// Pull slow-tier sysdata that is heavier/less latency-sensitive than CPU.
-/// CPU is collected in its own updater loop so it can honor configured
-/// collection rates even when other slow probes block.
-pub fn pull_sysdata_slow() -> Vec<RegistryEntry> {
-    use std::thread;
-    use crate::ipc::sysdata::{
-        gpu::get_gpu_json,
-        ram::get_ram_json,
-        storage::get_storage_json,
-        network::get_network_json,
-        bluetooth::get_bluetooth_json,
-        wifi::get_wifi_json,
-        system::get_system_json,
-        processes::get_processes_json,
-    };
-
-    // Run all slow-tier modules in parallel — each one spawns PowerShell /
-    // WMI queries that block for 1-5s.  By running concurrently the total
-    // wall-clock time is that of the slowest single module instead of the
-    // sum of all of them.
-    thread::scope(|s| {
-        let h_ram       = s.spawn(|| ("ram",       get_ram_json()));
-        let h_gpu       = s.spawn(|| ("gpu",       get_gpu_json()));
-        let h_storage   = s.spawn(|| ("storage",   get_storage_json()));
-        let h_network   = s.spawn(|| ("network",   get_network_json()));
-        let h_bluetooth = s.spawn(|| ("bluetooth", get_bluetooth_json()));
-        let h_wifi      = s.spawn(|| ("wifi",      get_wifi_json()));
-        let h_system    = s.spawn(|| ("system",    get_system_json()));
-        let h_processes = s.spawn(|| ("processes", get_processes_json()));
-
-        let results = [
-            h_ram.join(),
-            h_gpu.join(),
-            h_storage.join(),
-            h_network.join(),
-            h_bluetooth.join(),
-            h_wifi.join(),
-            h_system.join(),
-            h_processes.join(),
-        ];
-
-        results
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .map(|(cat, metadata)| RegistryEntry {
-                id: cat.into(),
-                category: cat.into(),
-                subtype: "system".into(),
-                metadata,
-                path: std::path::PathBuf::new(),
-                exe_path: "".into(),
-            })
-            .collect()
-    })
-}
-
 /// Merge a partial tier update into the existing sysdata vec.
 /// Entries whose category belongs to `tier_categories` are replaced; the rest are kept.
 pub fn merge_sysdata_tier(existing: &[RegistryEntry], fresh: Vec<RegistryEntry>, tier_categories: &[&str]) -> Vec<RegistryEntry> {
@@ -338,7 +283,6 @@ pub fn registry_manager() {
         let addons = discover_addons(&root.join("Addons"));
         let assets = discover_assets(&root.join("Assets"));
         *reg = Registry { addons, assets, sysdata: Vec::new(), appdata: Vec::new() };
-        write_registry_json(&reg, &root);
         info!(
             "Registry initialized: {} addons, {} assets",
             reg.addons.len(),
@@ -380,17 +324,6 @@ pub fn registry_watcher() -> Result<(), Box<dyn std::error::Error>> {
         match rx.recv() {
             Ok(Ok(event)) => {
                 if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)) {
-                    let touches_registry_json = event.paths.iter().any(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_str())
-                            .map(|n| n.eq_ignore_ascii_case("registry.json"))
-                            .unwrap_or(false)
-                    });
-
-                    if touches_registry_json {
-                        continue;
-                    }
-
                     let touches_content_tree = event.paths.iter().any(|p| {
                         if !(p.starts_with(&addons_root) || p.starts_with(&assets_root)) {
                             return false;
@@ -429,41 +362,61 @@ fn reload_registry(root: &Path) {
         // (managed by the data-updater threads).
         reg.addons = addons;
         reg.assets = assets;
-        write_registry_json(&reg, root);
     }
 
     info!("Registry reload complete");
 }
 
-pub fn write_registry_json(reg: &Registry, root: &Path) {
-    let path = root.join("registry.json");
-
-    let output = registry_to_output_json(reg);
-
-    let json = match serde_json::to_string_pretty(&output) {
-        Ok(j) => j,
-        Err(e) => {
-            error!("Failed to serialize registry: {e}");
-            return;
-        }
-    };
-
-    if let Err(e) = std::fs::write(&path, json) {
-        error!("Failed to write registry.json: {e}");
-    } else {
-        *LAST_REGISTRY_WRITE
-            .get_or_init(|| RwLock::new(Instant::now()))
-            .write()
-            .unwrap() = Instant::now();
-    }
-}
-
 pub fn registry_to_output_json(reg: &Registry) -> Value {
+    let sysdata_out = output_sysdata(&reg.sysdata);
+    let appdata_out = output_appdata(&reg.appdata, &reg.sysdata);
+    let tracking_active = demand_tracking_active();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let section_values = [
+        ("time", sysdata_out.get("time").cloned().unwrap_or(Value::Null)),
+        ("cpu", sysdata_out.get("cpu").cloned().unwrap_or(Value::Null)),
+        ("gpu", sysdata_out.get("gpu").cloned().unwrap_or(Value::Null)),
+        ("ram", sysdata_out.get("ram").cloned().unwrap_or(Value::Null)),
+        ("storage", sysdata_out.get("storage").cloned().unwrap_or(Value::Null)),
+        ("displays", sysdata_out.get("displays").cloned().unwrap_or(Value::Null)),
+        ("network", sysdata_out.get("network").cloned().unwrap_or(Value::Null)),
+        ("wifi", sysdata_out.get("wifi").cloned().unwrap_or(Value::Null)),
+        ("bluetooth", sysdata_out.get("bluetooth").cloned().unwrap_or(Value::Null)),
+        ("audio", sysdata_out.get("audio").cloned().unwrap_or(Value::Null)),
+        ("keyboard", sysdata_out.get("keyboard").cloned().unwrap_or(Value::Null)),
+        ("mouse", sysdata_out.get("mouse").cloned().unwrap_or(Value::Null)),
+        ("power", sysdata_out.get("power").cloned().unwrap_or(Value::Null)),
+        ("idle", sysdata_out.get("idle").cloned().unwrap_or(Value::Null)),
+        ("system", sysdata_out.get("system").cloned().unwrap_or(Value::Null)),
+        ("processes", sysdata_out.get("processes").cloned().unwrap_or(Value::Null)),
+        ("appdata", appdata_out.clone()),
+    ];
+
+    let mut sections_meta = serde_json::Map::new();
+
+    for (section, _value) in section_values {
+        sections_meta.insert(
+            section.to_string(),
+            serde_json::json!({
+                "tracked": section_tracking_enabled(section)
+            }),
+        );
+    }
+
     serde_json::json!({
         "addons": output_addons(&reg.addons),
         "assets": output_assets(&reg.assets),
-        "sysdata": output_sysdata(&reg.sysdata),
-        "appdata": output_appdata(&reg.appdata, &reg.sysdata),
+        "sysdata": sysdata_out,
+        "appdata": appdata_out,
+        "__meta": {
+            "written_ms": now_ms,
+            "tracking_active": tracking_active,
+            "sections": sections_meta,
+        }
     })
 }
 
@@ -527,23 +480,46 @@ fn output_assets(assets: &[RegistryEntry]) -> Value {
 }
 
 fn output_sysdata(sysdata: &[RegistryEntry]) -> Value {
+    // Display entries are stored as a single grouped RegistryEntry whose
+    // metadata contains `{ "monitors": [...] }`.  Expand them into
+    // individual entries so the SDK / wallpaper receives a flat array.
     let displays: Vec<Value> = sysdata
         .iter()
         .filter(|entry| entry.category.eq_ignore_ascii_case("display"))
-        .map(|entry| {
-            let id = entry
-                .metadata
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&entry.id)
-                .to_string();
-
-            serde_json::json!({
-                "id": id,
-                "category": entry.category,
-                "subtype": entry.subtype,
-                "metadata": entry.metadata,
-            })
+        .flat_map(|entry| {
+            // If the entry has a "monitors" array in metadata, expand it
+            if let Some(monitors) = entry.metadata.get("monitors").and_then(|v| v.as_array()) {
+                monitors
+                    .iter()
+                    .map(|m| {
+                        let id = m
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        serde_json::json!({
+                            "id": id,
+                            "category": entry.category,
+                            "subtype": entry.subtype,
+                            "metadata": m,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                // Legacy: individual display entry
+                let id = entry
+                    .metadata
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&entry.id)
+                    .to_string();
+                vec![serde_json::json!({
+                    "id": id,
+                    "category": entry.category,
+                    "subtype": entry.subtype,
+                    "metadata": entry.metadata,
+                })]
+            }
         })
         .collect();
 

@@ -8,13 +8,18 @@ use std::{
 		atomic::{AtomicBool, Ordering},
 		OnceLock, RwLock,
 	},
-	time::{Duration, Instant},
+	time::Duration,
 };
+use rustfft::{FftPlanner, num_complex::Complex};
+use super::media;
 use windows::Win32::{
 	Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
 	Media::Audio::{
 		eCapture, eConsole, eMultimedia, eRender, IMMDevice, IMMDeviceEnumerator,
 		MMDeviceEnumerator,
+		IAudioClient, IAudioCaptureClient,
+		AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
+		WAVEFORMATEX,
 	},
 	Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioMeterInformation},
 	System::Com::{
@@ -22,14 +27,6 @@ use windows::Win32::{
 		CoCreateInstance, CoInitializeEx, CoTaskMemFree, STGM_READ, CLSCTX_ALL,
 		COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED,
 	},
-};
-use windows::Media::Control::{
-	GlobalSystemMediaTransportControlsSessionManager,
-	GlobalSystemMediaTransportControlsSession,
-	GlobalSystemMediaTransportControlsSessionMediaProperties,
-	GlobalSystemMediaTransportControlsSessionPlaybackInfo,
-	GlobalSystemMediaTransportControlsSessionTimelineProperties,
-	GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
 
 unsafe fn endpoint_display_name(device: &IMMDevice) -> Option<String> {
@@ -61,57 +58,16 @@ thread_local! {
 /// At 100 ms poll rate this is roughly every 5 seconds.
 const REFRESH_EVERY_N_CALLS: u32 = 50;
 
-/// Media session polling cadence. This runs on a dedicated background thread
-/// so media updates stay responsive even if audio pull cadence changes.
-const MEDIA_POLL_INTERVAL_MS: u64 = 200;
+/// Number of frequency bins sent to the frontend.
+const SPECTRUM_BINS: usize = 32;
+/// FFT window size (samples). 2048 at 48 kHz ≈ 42.7 ms of audio.
+const FFT_SIZE: usize = 2048;
 
-static MEDIA_SESSION_CACHE: OnceLock<RwLock<Value>> = OnceLock::new();
-static MEDIA_POLLER_STARTED: AtomicBool = AtomicBool::new(false);
-static MEDIA_TIMELINE_TRACKER: OnceLock<RwLock<MediaTimelineTracker>> = OnceLock::new();
+static SPECTRUM_CACHE: OnceLock<RwLock<[f32; SPECTRUM_BINS]>> = OnceLock::new();
+static SPECTRUM_STARTED: AtomicBool = AtomicBool::new(false);
 
-#[derive(Default)]
-struct MediaTimelineTracker {
-	session_key: String,
-	position_ms: i64,
-	sampled_at: Option<Instant>,
-}
-
-fn media_session_cache() -> &'static RwLock<Value> {
-	MEDIA_SESSION_CACHE.get_or_init(|| RwLock::new(json!({ "playing": false })))
-}
-
-fn media_timeline_tracker() -> &'static RwLock<MediaTimelineTracker> {
-	MEDIA_TIMELINE_TRACKER.get_or_init(|| RwLock::new(MediaTimelineTracker::default()))
-}
-
-fn start_media_poller_once() {
-	if MEDIA_POLLER_STARTED
-		.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-		.is_err()
-	{
-		return;
-	}
-
-	std::thread::spawn(|| {
-		loop {
-			let media = query_media_session();
-			if media.is_null() {
-				*media_session_cache().write().unwrap() = json!({ "playing": false });
-			} else {
-				*media_session_cache().write().unwrap() = media;
-			}
-			std::thread::sleep(Duration::from_millis(MEDIA_POLL_INTERVAL_MS));
-		}
-	});
-}
-
-fn refresh_media_session_cache() {
-	let media = query_media_session();
-	if media.is_null() {
-		*media_session_cache().write().unwrap() = json!({ "playing": false });
-	} else {
-		*media_session_cache().write().unwrap() = media;
-	}
+fn spectrum_cache() -> &'static RwLock<[f32; SPECTRUM_BINS]> {
+	SPECTRUM_CACHE.get_or_init(|| RwLock::new([0.0; SPECTRUM_BINS]))
 }
 
 struct BackendAudioState {
@@ -208,8 +164,8 @@ pub fn get_audio_json() -> Value {
 	unsafe {
 		let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 	}
-	start_media_poller_once();
-	refresh_media_session_cache();
+	media::refresh_media_session_cache_if_due();
+	start_spectrum_capture_once();
 
 	AUDIO_STATE.with(|cell| {
 		const HISTORY_LIMIT: usize = 64;
@@ -341,343 +297,246 @@ pub fn get_audio_json() -> Value {
 				"volume_percent": (input_volume * 100.0).round(),
 				"muted": input_muted,
 			},
-			"media_session": media_session_cache().read().unwrap().clone(),
+			"media_session": media::get_media_session_json(),
+			"spectrum_32": spectrum_cache().read().map(|s| s.to_vec()).unwrap_or_default(),
 		})
 	})
 }
 
-fn query_media_session() -> Value {
+fn start_spectrum_capture_once() {
+	if SPECTRUM_STARTED
+		.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+		.is_err()
+	{
+		return;
+	}
+
+	std::thread::Builder::new()
+		.name("spectrum-capture".into())
+		.spawn(move || {
+			if let Err(_e) = spectrum_capture_loop() {
+				// On failure, zero out the cache so the frontend sees silence.
+				if let Ok(mut bins) = spectrum_cache().write() {
+					*bins = [0.0; SPECTRUM_BINS];
+				}
+			}
+		})
+		.ok();
+}
+
+fn build_band_edges(fft_bins: usize, sample_rate: u32) -> Vec<(usize, usize)> {
+	let nyquist = sample_rate as f64 / 2.0;
+	let hz_per_bin = nyquist / fft_bins as f64;
+
+	// Map frequencies 20 Hz → nyquist on a log scale into SPECTRUM_BINS bands.
+	let lo_hz: f64 = 20.0;
+	let hi_hz: f64 = nyquist.min(20_000.0);
+	let log_lo = lo_hz.ln();
+	let log_hi = hi_hz.ln();
+	let mut edges = Vec::with_capacity(SPECTRUM_BINS);
+	for i in 0..SPECTRUM_BINS {
+		let t0 = i as f64 / SPECTRUM_BINS as f64;
+		let t1 = (i + 1) as f64 / SPECTRUM_BINS as f64;
+		let f0 = (log_lo + (log_hi - log_lo) * t0).exp();
+		let f1 = (log_lo + (log_hi - log_lo) * t1).exp();
+		let bin_lo = (f0 / hz_per_bin).floor() as usize;
+		let bin_hi = ((f1 / hz_per_bin).ceil() as usize).max(bin_lo + 1).min(fft_bins);
+		edges.push((bin_lo, bin_hi));
+	}
+	edges
+}
+
+#[inline]
+fn hann(i: usize, n: usize) -> f32 {
+	let x = std::f32::consts::PI * 2.0 * i as f32 / (n as f32 - 1.0);
+	0.5 * (1.0 - x.cos())
+}
+
+fn spectrum_capture_loop() -> Result<(), String> {
 	unsafe {
 		let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-	}
 
-	// Block on the async request
-	let manager: GlobalSystemMediaTransportControlsSessionManager = match
-		GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-	{
-		Ok(op) => {
-			// Retry GetResults until the async op completes
-			let mut result = None;
-			for _ in 0..100 {
-				match op.GetResults() {
-					Ok(m) => { result = Some(m); break; }
-					Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
-				}
-			}
-			match result {
-				Some(m) => m,
-				None => return Value::Null,
-			}
-		}
-		Err(_) => return Value::Null,
-	};
+		let enumerator: IMMDeviceEnumerator =
+			CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+				.map_err(|e| format!("enumerator: {e:?}"))?;
 
-	let current_session = manager.GetCurrentSession().ok();
-	let sessions = manager.GetSessions().ok();
-	let mut chosen_session = current_session.clone();
-	let mut best_score: i32 = i32::MIN;
+		let device = enumerator
+			.GetDefaultAudioEndpoint(eRender, eMultimedia)
+			.or_else(|_| enumerator.GetDefaultAudioEndpoint(eRender, eConsole))
+			.map_err(|e| format!("endpoint: {e:?}"))?;
 
-	if let Some(current) = current_session.as_ref() {
-		let current_playing = current
-			.GetPlaybackInfo()
-			.ok()
-			.and_then(|info| info.PlaybackStatus().ok())
-			.map(|s| s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
-			.unwrap_or(false);
-		if current_playing {
-			best_score = 100;
-		}
-	}
+		let client: IAudioClient = device
+			.Activate(CLSCTX_ALL, None)
+			.map_err(|e| format!("IAudioClient: {e:?}"))?;
 
-	if let Some(list) = sessions {
-		if let Ok(size) = list.Size() {
-			for i in 0..size {
-				let Ok(candidate) = list.GetAt(i) else {
-					continue;
+		// Query the device mix format
+		let mix_fmt_ptr = client
+			.GetMixFormat()
+			.map_err(|e| format!("GetMixFormat: {e:?}"))?;
+		let mix_fmt: WAVEFORMATEX = *mix_fmt_ptr;
+		let sample_rate = mix_fmt.nSamplesPerSec;
+		let channels = mix_fmt.nChannels as usize;
+		let bits_per_sample = mix_fmt.wBitsPerSample;
+
+		// Initialise in shared loopback mode
+		// Buffer duration = 50 ms in 100-ns units
+		let buffer_duration: i64 = 500_000; // 50 ms
+		client
+			.Initialize(
+				AUDCLNT_SHAREMODE_SHARED,
+				AUDCLNT_STREAMFLAGS_LOOPBACK,
+				buffer_duration,
+				0,
+				mix_fmt_ptr,
+				None,
+			)
+			.map_err(|e| format!("Initialize: {e:?}"))?;
+
+		let capture: IAudioCaptureClient = client
+			.GetService()
+			.map_err(|e| format!("GetService(capture): {e:?}"))?;
+
+		client.Start().map_err(|e| format!("Start: {e:?}"))?;
+
+		// Pre-compute
+		let band_edges = build_band_edges(FFT_SIZE / 2, sample_rate);
+		let mut planner = FftPlanner::<f32>::new();
+		let fft = planner.plan_fft_forward(FFT_SIZE);
+		let mut ring = Vec::<f32>::with_capacity(FFT_SIZE);
+		let mut fft_buf: Vec<Complex<f32>> = vec![Complex::new(0.0, 0.0); FFT_SIZE];
+
+		// Smoothed output bins (EMA)
+		let mut smooth_bins = [0.0f32; SPECTRUM_BINS];
+		const SMOOTH_UP: f32 = 0.55;   // attack — fast enough to see transients
+		const SMOOTH_DOWN: f32 = 0.18;  // release — graceful fall-off
+
+		loop {
+			// Sleep briefly to let the capture buffer fill
+			std::thread::sleep(Duration::from_millis(16));
+
+			// Drain all available packets
+			loop {
+				let packet_size = match capture.GetNextPacketSize() {
+					Ok(s) => s,
+					Err(_) => break,
 				};
-
-				let is_playing = candidate
-					.GetPlaybackInfo()
-					.ok()
-					.and_then(|info| info.PlaybackStatus().ok())
-					.map(|s| s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
-					.unwrap_or(false);
-				if !is_playing {
-					continue;
+				if packet_size == 0 {
+					break;
 				}
 
-				let mut score = 100;
-				let timeline = candidate.GetTimelineProperties().ok();
-				let pos = timeline
-					.as_ref()
-					.and_then(|t| t.Position().ok())
-					.map(|d| d.Duration / 10_000);
-				let start = timeline
-					.as_ref()
-					.and_then(|t| t.StartTime().ok())
-					.map(|d| d.Duration / 10_000)
-					.unwrap_or(0);
-				let end = timeline
-					.as_ref()
-					.and_then(|t| t.EndTime().ok())
-					.map(|d| d.Duration / 10_000);
-				let duration = end.map(|e| (e - start).max(0));
-				let rel_pos = pos.map(|p| (p - start).max(0));
-
-				if duration.unwrap_or(0) > 0 {
-					score += 20;
+				let mut data_ptr: *mut u8 = std::ptr::null_mut();
+				let mut frames: u32 = 0;
+				let mut flags: u32 = 0;
+				if capture
+					.GetBuffer(
+						&mut data_ptr as *mut *mut u8,
+						&mut frames as *mut u32,
+						&mut flags as *mut u32,
+						None,
+						None,
+					)
+					.is_err()
+				{
+					break;
 				}
 
-				if let Some(d) = duration {
-					if d >= 900_000 {
-						score += 220;
-					} else if d >= 300_000 {
-						score += 140;
-					} else if d >= 120_000 {
-						score += 90;
-					} else if d >= 60_000 {
-						score += 30;
-					} else {
-						score -= 50;
-					}
-				}
+				let frame_count = frames as usize;
+				let silent = (flags & 0x02) != 0; // AUDCLNT_BUFFERFLAGS_SILENT
 
-				if let (Some(p), Some(d)) = (rel_pos, duration) {
-					if d > 0 {
-						if p + 1000 < d {
-							score += 40;
-						} else {
-							score -= 20;
+				if !silent && frame_count > 0 && !data_ptr.is_null() {
+					// Interpret samples based on format
+					if bits_per_sample == 32 {
+						// IEEE float (most common for shared mode)
+						let samples = std::slice::from_raw_parts(
+							data_ptr as *const f32,
+							frame_count * channels,
+						);
+						// Down-mix to mono and push into ring buffer
+						for f in 0..frame_count {
+							let mut sum = 0.0f32;
+							for c in 0..channels {
+								sum += samples[f * channels + c];
+							}
+							ring.push(sum / channels as f32);
+							if ring.len() > FFT_SIZE {
+								ring.drain(..ring.len() - FFT_SIZE);
+							}
+						}
+					} else if bits_per_sample == 16 {
+						let samples = std::slice::from_raw_parts(
+							data_ptr as *const i16,
+							frame_count * channels,
+						);
+						for f in 0..frame_count {
+							let mut sum = 0.0f32;
+							for c in 0..channels {
+								sum += samples[f * channels + c] as f32 / 32768.0;
+							}
+							ring.push(sum / channels as f32);
+							if ring.len() > FFT_SIZE {
+								ring.drain(..ring.len() - FFT_SIZE);
+							}
 						}
 					}
+					// else: unsupported bit depth — skip silently
 				}
 
-				if score > best_score {
-					best_score = score;
-					chosen_session = Some(candidate);
+				let _ = capture.ReleaseBuffer(frames);
+			}
+
+			// Only run FFT when we have a full window
+			if ring.len() < FFT_SIZE {
+				continue;
+			}
+
+			// Apply Hann window and fill FFT buffer
+			let offset = ring.len() - FFT_SIZE;
+			for i in 0..FFT_SIZE {
+				fft_buf[i] = Complex::new(ring[offset + i] * hann(i, FFT_SIZE), 0.0);
+			}
+
+			fft.process(&mut fft_buf);
+
+			// Compute magnitude spectrum (first half only — real input is symmetric)
+			let half = FFT_SIZE / 2;
+			let scale = 2.0 / FFT_SIZE as f32;
+
+			let mut raw_bins = [0.0f32; SPECTRUM_BINS];
+			for (band, &(lo, hi)) in band_edges.iter().enumerate() {
+				let mut sum = 0.0f32;
+				let count = (hi - lo).max(1) as f32;
+				for k in lo..hi.min(half) {
+					let mag = fft_buf[k].norm() * scale;
+					sum += mag;
 				}
+				raw_bins[band] = sum / count;
+			}
+
+			// Convert to dB, normalise to 0..1 range
+			const FLOOR_DB: f32 = -80.0;
+			const CEIL_DB: f32 = 0.0;
+			const RANGE_DB: f32 = CEIL_DB - FLOOR_DB;
+
+			for i in 0..SPECTRUM_BINS {
+				let db = if raw_bins[i] > 1e-10 {
+					20.0 * raw_bins[i].log10()
+				} else {
+					FLOOR_DB
+				};
+				let norm = ((db - FLOOR_DB) / RANGE_DB).clamp(0.0, 1.0);
+
+				// EMA smooth
+				if norm > smooth_bins[i] {
+					smooth_bins[i] += (norm - smooth_bins[i]) * SMOOTH_UP;
+				} else {
+					smooth_bins[i] += (norm - smooth_bins[i]) * SMOOTH_DOWN;
+				}
+			}
+
+			// Write to shared cache
+			if let Ok(mut cache) = spectrum_cache().write() {
+				*cache = smooth_bins;
 			}
 		}
 	}
-
-	let session: GlobalSystemMediaTransportControlsSession = match chosen_session {
-		Some(s) => s,
-		None => return json!({ "playing": false }),
-	};
-
-	let playback_info: Option<GlobalSystemMediaTransportControlsSessionPlaybackInfo> =
-		session.GetPlaybackInfo().ok();
-	let timeline: Option<GlobalSystemMediaTransportControlsSessionTimelineProperties> =
-		session.GetTimelineProperties().ok();
-
-	// Block on media properties async
-	let properties: Option<GlobalSystemMediaTransportControlsSessionMediaProperties> =
-		session.TryGetMediaPropertiesAsync().ok().and_then(|op| {
-			for _ in 0..100 {
-				match op.GetResults() {
-					Ok(r) => return Some(r),
-					Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
-				}
-			}
-			None
-		});
-
-	let status = playback_info
-		.as_ref()
-		.and_then(|info| info.PlaybackStatus().ok());
-
-	let status_str = status.map(|s| {
-		if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing {
-			"playing"
-		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused {
-			"paused"
-		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Stopped {
-			"stopped"
-		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Opened {
-			"opened"
-		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed {
-			"closed"
-		} else if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Changing {
-			"changing"
-		} else {
-			"unknown"
-		}
-	});
-
-	let is_playing = status
-		.map(|s| s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
-		.unwrap_or(false);
-
-	let title = properties
-		.as_ref()
-		.and_then(|p| p.Title().ok())
-		.map(|s| s.to_string());
-	let artist = properties
-		.as_ref()
-		.and_then(|p| p.Artist().ok())
-		.map(|s| s.to_string());
-	let album = properties
-		.as_ref()
-		.and_then(|p| p.AlbumTitle().ok())
-		.map(|s| s.to_string());
-	let album_artist = properties
-		.as_ref()
-		.and_then(|p| p.AlbumArtist().ok())
-		.map(|s| s.to_string());
-	let track_number = properties
-		.as_ref()
-		.and_then(|p| p.TrackNumber().ok());
-	let album_track_count = properties
-		.as_ref()
-		.and_then(|p| p.AlbumTrackCount().ok());
-	let genres = properties.as_ref().and_then(|p| {
-		p.Genres().ok().map(|g| {
-			let mut v = Vec::new();
-			if let Ok(size) = g.Size() {
-				for i in 0..size {
-					if let Ok(s) = g.GetAt(i) {
-						v.push(Value::String(s.to_string()));
-					}
-				}
-			}
-			v
-		})
-	});
-	let playback_type = properties
-		.as_ref()
-		.and_then(|p| p.PlaybackType().ok())
-		.and_then(|pt| pt.Value().ok())
-		.map(|v| match v.0 {
-			0 => "unknown",
-			1 => "music",
-			2 => "video",
-			3 => "image",
-			_ => "other",
-		});
-
-	// Source app info
-	let source_app_id = session
-		.SourceAppUserModelId()
-		.ok()
-		.map(|s| s.to_string());
-
-	// Timeline (units are 100-nanosecond intervals)
-	let raw_position_ms = timeline
-		.as_ref()
-		.and_then(|t| t.Position().ok())
-		.map(|d| d.Duration / 10_000);
-	let start_ms = timeline
-		.as_ref()
-		.and_then(|t| t.StartTime().ok())
-		.map(|d| d.Duration / 10_000);
-	let end_ms = timeline
-		.as_ref()
-		.and_then(|t| t.EndTime().ok())
-		.map(|d| d.Duration / 10_000);
-	let position_ms = raw_position_ms.map(|pos| {
-		start_ms
-			.map(|start| (pos - start).max(0))
-			.unwrap_or(pos.max(0))
-	});
-	let duration_ms = end_ms
-		.zip(start_ms)
-		.map(|(e, s)| (e - s).max(0));
-
-	// Playback rate and shuffle/repeat
-	let playback_rate: Option<f64> = playback_info
-		.as_ref()
-		.and_then(|info| info.PlaybackRate().ok())
-		.and_then(|r| r.Value().ok());
-	let is_shuffle: Option<bool> = playback_info
-		.as_ref()
-		.and_then(|info| info.IsShuffleActive().ok())
-		.and_then(|v| v.Value().ok());
-	let auto_repeat = playback_info
-		.as_ref()
-		.and_then(|info| info.AutoRepeatMode().ok())
-		.and_then(|v| v.Value().ok())
-		.map(|v| match v.0 {
-			0 => "none",
-			1 => "track",
-			2 => "list",
-			_ => "unknown",
-		});
-
-	let session_key = format!(
-		"{}|{}|{}|{}|{}|{}",
-		source_app_id.as_deref().unwrap_or(""),
-		title.as_deref().unwrap_or(""),
-		artist.as_deref().unwrap_or(""),
-		album.as_deref().unwrap_or(""),
-		track_number.unwrap_or(0),
-		duration_ms.unwrap_or(0)
-	);
-
-	let mut effective_position_ms = position_ms.unwrap_or(0).max(0);
-	let effective_rate = playback_rate.unwrap_or(1.0).max(0.0);
-	let duration_hint = duration_ms.unwrap_or(0).max(0);
-	let raw_looks_stale_end = is_playing
-		&& duration_hint > 0
-		&& position_ms
-			.map(|p| p >= duration_hint.saturating_sub(500))
-			.unwrap_or(false);
-	let now = Instant::now();
-
-	{
-		let mut tracker = media_timeline_tracker().write().unwrap();
-
-		if tracker.session_key == session_key {
-			if is_playing && effective_rate > 0.0 {
-				if let Some(sampled_at) = tracker.sampled_at {
-					let elapsed_ms = now.duration_since(sampled_at).as_millis() as f64;
-					let projected = tracker.position_ms as f64 + elapsed_ms * effective_rate;
-					let projected_i64 = projected.floor() as i64;
-					if raw_looks_stale_end && tracker.position_ms + 1500 < duration_hint {
-						effective_position_ms = projected_i64.max(tracker.position_ms);
-					} else {
-						effective_position_ms = effective_position_ms.max(projected_i64);
-					}
-				}
-			} else if position_ms.is_none() {
-				effective_position_ms = tracker.position_ms;
-			}
-		} else if raw_looks_stale_end {
-			effective_position_ms = 0;
-		}
-
-		if let Some(duration) = duration_ms {
-			effective_position_ms = effective_position_ms.clamp(0, duration);
-		} else {
-			effective_position_ms = effective_position_ms.max(0);
-		}
-
-		tracker.session_key = session_key;
-		tracker.position_ms = effective_position_ms;
-		tracker.sampled_at = Some(now);
-	}
-
-	let position_ms = Some(effective_position_ms);
-
-	json!({
-		"playing": is_playing,
-		"source_app_id": source_app_id,
-		"title": title,
-		"artist": artist,
-		"album": album,
-		"album_artist": album_artist,
-		"track_number": track_number,
-		"album_track_count": album_track_count,
-		"genres": genres,
-		"playback_type": playback_type,
-		"playback_status": status_str,
-		"playback_rate": playback_rate,
-		"shuffle": is_shuffle,
-		"repeat_mode": auto_repeat,
-		"timeline": {
-			"position_ms": position_ms,
-			"start_ms": start_ms,
-			"end_ms": end_ms,
-			"duration_ms": duration_ms,
-		}
-	})
 }

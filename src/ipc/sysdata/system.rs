@@ -25,6 +25,7 @@ pub fn get_system_json() -> Value {
 	let theme = get_windows_theme();
 	let bios_info = get_bios_info();
 	let motherboard_info = get_motherboard_info();
+	let uptime_seconds = System::uptime();
 
 	json!({
 		"os": {
@@ -40,6 +41,7 @@ pub fn get_system_json() -> Value {
 		"username": username,
 		"user_domain": user_domain,
 		"user_profile": user_profile,
+		"uptime_seconds": uptime_seconds,
 		"locale": locale,
 		"theme": theme,
 		"bios": bios_info,

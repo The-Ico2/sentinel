@@ -12,7 +12,7 @@ pub fn dispatch(
     args: Option<Value>,
 ) -> Result<Value, String> {
     match ns {
-        "registry" => registryd::dispatch_registry(cmd),
+        "registry" => registryd::dispatch_registry(cmd, args),
         "sysdata" => sysdatad::dispatch_sysdata(cmd),
         "addon" => addond::dispatch_addon(cmd, args),
         "backend" => backendd::dispatch_backend(cmd, args),

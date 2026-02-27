@@ -1,17 +1,33 @@
 // ~/sentinel/sentinel-backend/src/ipc/dispatch/registryd.rs
 
 use serde_json::Value;
-use crate::config::refresh_on_request;
-use crate::ipc::data_updater::refresh_fast_tier_now;
+use crate::ipc::data_updater::set_explicit_tracking_demands;
 use crate::ipc::registry::{global_registry, registry_to_output_json};
 
-pub fn dispatch_registry(cmd: &str) -> Result<Value, String> {
-    // When refresh_on_request is enabled, refresh fast-tier data inline
-    // so clients always get the freshest lightweight readings.
-    let is_sysdata_query = matches!(cmd, "list_sysdata" | "list_appdata" | "snapshot");
-    if is_sysdata_query && refresh_on_request() {
-        refresh_fast_tier_now();
+fn sections_from_args(args: Option<&Value>) -> Option<Vec<String>> {
+    args
+        .and_then(|a| a.get("sections"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+}
+
+pub fn dispatch_registry(cmd: &str, args: Option<Value>) -> Result<Value, String> {
+    let sections_arg = sections_from_args(args.as_ref());
+    let _sections = sections_arg.clone().unwrap_or_default();
+
+    if cmd == "snapshot" {
+        if let Some(explicit_sections) = sections_arg {
+            set_explicit_tracking_demands(&explicit_sections);
+        }
     }
+
+    // No inline refresh — updater threads maintain the registry in real time.
+    // Reading directly from the in-memory registry avoids lock contention and
+    // keeps IPC latency minimal.
 
     let reg = global_registry().read().unwrap();
     let output = registry_to_output_json(&reg);
@@ -28,6 +44,9 @@ pub fn dispatch_registry(cmd: &str) -> Result<Value, String> {
             let appdata = output.get("appdata").cloned().unwrap_or(Value::Null);
             Ok(serde_json::json!({ "sysdata": sysdata, "appdata": appdata }))
         }
+        // Full registry output including addons, assets, __meta — used by
+        // the Sentinel UI Data page so it can display everything.
+        "full" => Ok(output),
         _ => Err(format!("Unknown registry command: {}", cmd)),
     }
 }

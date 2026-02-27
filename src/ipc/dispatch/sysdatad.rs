@@ -3,7 +3,6 @@
 use serde_json::Value;
 use crate::ipc::sysdata::display::MonitorManager;
 use crate::ipc::registry::global_registry;
-use crate::ipc::sysdata::time as time_module;
 
 fn metadata_for_category(reg: &crate::ipc::registry::Registry, category: &str) -> Value {
     reg.sysdata
@@ -14,6 +13,7 @@ fn metadata_for_category(reg: &crate::ipc::registry::Registry, category: &str) -
 }
 
 pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
+    
     let reg = global_registry().read().unwrap();
 
     match cmd {
@@ -64,8 +64,9 @@ pub fn dispatch_sysdata(cmd: &str) -> Result<Value, String> {
         "get_ram" => Ok(metadata_for_category(&reg, "ram")),
         "get_storage" => Ok(metadata_for_category(&reg, "storage")),
         "get_network" => Ok(metadata_for_category(&reg, "network")),
+        "get_media" => Ok(metadata_for_category(&reg, "media")),
         "get_audio" => Ok(metadata_for_category(&reg, "audio")),
-        "get_time"=> Ok(time_module::get_time_json()),
+        "get_time"=> Ok(metadata_for_category(&reg, "time")),
         "get_keyboard" => Ok(metadata_for_category(&reg, "keyboard")),
         "get_mouse" => Ok(metadata_for_category(&reg, "mouse")),
         "get_power" => Ok(metadata_for_category(&reg, "power")),

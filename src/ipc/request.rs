@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_vec, from_slice};
 use windows::core::PCWSTR;
 use windows::Win32::{
-    Foundation::{CloseHandle, HANDLE, ERROR_PIPE_BUSY},
+    Foundation::{CloseHandle, HANDLE, ERROR_PIPE_BUSY, ERROR_MORE_DATA, ERROR_BROKEN_PIPE, ERROR_NO_DATA},
     Storage::FileSystem::{
         CreateFileW, ReadFile, WriteFile, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
         FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES,
@@ -10,7 +10,7 @@ use windows::Win32::{
     System::Pipes::WaitNamedPipeW,
 };
 use crate::ipc::response::IpcResponse;
-use crate::{info, warn, error};
+use crate::error;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IpcRequest {
@@ -20,15 +20,17 @@ pub struct IpcRequest {
 }
 
 const PIPE_NAME: &str = r"\\.\pipe\sentinel";
-const BUFFER_SIZE: usize = 16 * 1024;
+const READ_CHUNK: usize = 64 * 1024;
 
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 
-pub fn send_ipc_request(request: IpcRequest) -> Result<IpcResponse, String> {
-    info!("IPC request: ns='{}', cmd='{}', args={:?}", request.ns, request.cmd, request.args);
+fn is_win32_error(err: &windows::core::Error, win32_code: u32) -> bool {
+    err.code() == windows::core::HRESULT::from_win32(win32_code)
+}
 
+pub fn send_ipc_request(request: IpcRequest) -> Result<IpcResponse, String> {
     unsafe {
         // --- Connect to pipe ---
         let handle: HANDLE = loop {
@@ -43,18 +45,13 @@ pub fn send_ipc_request(request: IpcRequest) -> Result<IpcResponse, String> {
             );
 
             match result {
-                Ok(h) => {
-                    info!("Connected to IPC pipe '{}'", PIPE_NAME);
-                    break h;
-                },
+                Ok(h) => break h,
                 Err(err) => {
                     let code = err.code().0 as u32;
                     if code == ERROR_PIPE_BUSY.0 {
-                        warn!("IPC pipe busy, waiting...");
                         let _ = WaitNamedPipeW(PCWSTR(to_wide(PIPE_NAME).as_ptr()), 2000);
                         continue;
                     }
-                    error!("Failed to connect to IPC pipe: {:?}", err);
                     return Err(format!("IPC connect failed: {:?}", err));
                 }
             }
@@ -65,7 +62,6 @@ pub fn send_ipc_request(request: IpcRequest) -> Result<IpcResponse, String> {
             Ok(p) => p,
             Err(e) => {
                 let _ = CloseHandle(handle);
-                error!("Failed to serialize IPC request: {e}");
                 return Err(format!("IPC serialize failed: {e}"));
             }
         };
@@ -73,31 +69,58 @@ pub fn send_ipc_request(request: IpcRequest) -> Result<IpcResponse, String> {
         let mut written = 0u32;
         if WriteFile(handle, Some(&payload), Some(&mut written), None).is_err() {
             let _ = CloseHandle(handle);
-            error!("IPC write failed");
             return Err("IPC write failed".into());
         }
-        info!("Sent {} bytes to IPC server", written);
 
-        // --- Read response ---
-        let mut buffer = vec![0u8; BUFFER_SIZE];
-        let mut read = 0u32;
-        if ReadFile(handle, Some(&mut buffer), Some(&mut read), None).is_err() {
-            let _ = CloseHandle(handle);
-            error!("[IPC] [Response] read failed");
-            return Err("[IPC] [Response] read failed".into());
+        // --- Read response (multi-chunk loop for messages > READ_CHUNK) ---
+        let mut response = Vec::<u8>::new();
+        loop {
+            let mut chunk = vec![0u8; READ_CHUNK];
+            let mut read = 0u32;
+
+            match ReadFile(handle, Some(&mut chunk), Some(&mut read), None) {
+                Ok(_) => {
+                    if read == 0 {
+                        break;
+                    }
+                    response.extend_from_slice(&chunk[..read as usize]);
+                    // In byte-mode reads a successful ReadFile means we got
+                    // all available data for now.  For message-mode pipes the
+                    // OS would signal ERROR_MORE_DATA if more is pending.
+                    break;
+                }
+                Err(e) => {
+                    if read > 0 {
+                        response.extend_from_slice(&chunk[..read as usize]);
+                    }
+
+                    if is_win32_error(&e, ERROR_MORE_DATA.0) {
+                        // More data available — keep reading
+                        continue;
+                    }
+
+                    // Broken pipe / no data after accumulating bytes means
+                    // the server closed its end — treat what we have as complete.
+                    if is_win32_error(&e, ERROR_BROKEN_PIPE.0)
+                        || is_win32_error(&e, ERROR_NO_DATA.0)
+                    {
+                        break;
+                    }
+
+                    let _ = CloseHandle(handle);
+                    error!("[IPC] [Response] read failed: {:?}", e);
+                    return Err("[IPC] [Response] read failed".into());
+                }
+            }
         }
-        info!("[IPC] [Response]: Received {} bytes from IPC server", read);
 
         let _ = CloseHandle(handle);
 
-        match from_slice::<IpcResponse>(&buffer[..read as usize]) {
-            Ok(resp) => {
-                info!("[IPC] [Response]: ok={}, error={:?}", resp.ok, resp.error);
-                Ok(resp)
-            },
+        match from_slice::<IpcResponse>(&response) {
+            Ok(resp) => Ok(resp),
             Err(e) => {
-                error!("[IPC] [Response] Failed to decode IPC response: {e}");
-                Err(format!("[IPC] [Response] decode failed: {e}"))
+                error!("[IPC] decode failed ({} bytes): {e}", response.len());
+                Err(format!("[IPC] decode failed: {e}"))
             }
         }
     }

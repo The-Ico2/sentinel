@@ -2,7 +2,6 @@
 
 use serde_json::{json, Value};
 use std::mem;
-use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
@@ -27,11 +26,15 @@ pub fn get_idle_json() -> Value {
 		"active"
 	};
 
+	let is_idle = idle_state != "active";
+
 	json!({
 		"idle_ms": idle_ms,
+		"idle_time_ms": idle_ms,
 		"idle_seconds": idle_seconds,
 		"idle_minutes": idle_minutes,
 		"idle_state": idle_state,
+		"is_idle": is_idle,
 		"screen_locked": screen_locked,
 		"screensaver_active": screensaver_active,
 	})
@@ -59,41 +62,65 @@ fn get_idle_time_ms() -> u64 {
 	0
 }
 
+/// Check if the screen is locked by looking for the LogonUI process.
+/// Uses Win32 process enumeration instead of spawning PowerShell.
 fn is_screen_locked() -> bool {
-	// Check if the lock screen process is running
-	let output = std::process::Command::new("powershell")
-		.args([
-			"-NoProfile",
-			"-Command",
-			"(Get-Process -Name LogonUI -ErrorAction SilentlyContinue) -ne $null",
-		])
-		.creation_flags(0x08000000)
-		.output();
+	use windows::Win32::System::ProcessStatus::EnumProcesses;
+	use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+	use windows::Win32::Foundation::CloseHandle;
 
-	match output {
-		Ok(o) => {
-			let result = String::from_utf8_lossy(&o.stdout).trim().to_lowercase();
-			result == "true"
+	unsafe {
+		let mut pids = vec![0u32; 4096];
+		let mut bytes_returned = 0u32;
+		if EnumProcesses(
+			pids.as_mut_ptr(),
+			(pids.len() * std::mem::size_of::<u32>()) as u32,
+			&mut bytes_returned,
+		).is_err() {
+			return false;
 		}
-		Err(_) => false,
+
+		let count = bytes_returned as usize / std::mem::size_of::<u32>();
+		for &pid in &pids[..count] {
+			if pid == 0 { continue; }
+			let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+				continue;
+			};
+			let mut buf = [0u16; 260];
+			let mut size = buf.len() as u32;
+			let ok = windows::Win32::System::Threading::QueryFullProcessImageNameW(
+				handle,
+				windows::Win32::System::Threading::PROCESS_NAME_FORMAT(0),
+				windows::core::PWSTR(buf.as_mut_ptr()),
+				&mut size,
+			);
+			let _ = CloseHandle(handle);
+			if ok.is_ok() && size > 0 {
+				let name = String::from_utf16_lossy(&buf[..size as usize]);
+				if let Some(filename) = name.rsplit('\\').next() {
+					if filename.eq_ignore_ascii_case("LogonUI.exe") {
+						return true;
+					}
+				}
+			}
+		}
+		false
 	}
 }
 
+/// Check if a screensaver is running by querying SystemParametersInfo.
 fn is_screensaver_running() -> bool {
-	let output = std::process::Command::new("powershell")
-		.args([
-			"-NoProfile",
-			"-Command",
-			"(Get-Process -Name *.scr -ErrorAction SilentlyContinue) -ne $null",
-		])
-		.creation_flags(0x08000000)
-		.output();
-
-	match output {
-		Ok(o) => {
-			let result = String::from_utf8_lossy(&o.stdout).trim().to_lowercase();
-			result == "true"
-		}
-		Err(_) => false,
+	use windows::Win32::UI::WindowsAndMessaging::{
+		SystemParametersInfoW, SPI_GETSCREENSAVERRUNNING, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+	};
+	unsafe {
+		let mut running: i32 = 0;
+		let ok = SystemParametersInfoW(
+			SPI_GETSCREENSAVERRUNNING,
+			0,
+			Some(&mut running as *mut i32 as *mut _),
+			SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+		);
+		ok.is_ok() && running != 0
 	}
 }

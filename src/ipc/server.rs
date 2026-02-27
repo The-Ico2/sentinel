@@ -19,7 +19,7 @@ use crate::{info, warn, error};
 const PIPE_NAME: &str = r"\\.\pipe\sentinel";
 const PIPE_ACCESS_DUPLEX: u32 = 0x00000003;
 
-const BUFFER_SIZE: u32 = 16 * 1024;
+const BUFFER_SIZE: u32 = 256 * 1024;
 
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()

@@ -1,8 +1,10 @@
 // ~/sentinel/sentinel-backend/src/ipc/sysdata/mouse.rs
 
 use serde_json::{json, Value};
+use std::sync::{OnceLock, RwLock};
 use windows::Win32::{
 	Foundation::POINT,
+	UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
 	UI::WindowsAndMessaging::{
 		GetCursorPos, GetSystemMetrics, SystemParametersInfoW,
 		SM_CMOUSEBUTTONS, SM_MOUSEPRESENT, SM_MOUSEWHEELPRESENT, SM_SWAPBUTTON,
@@ -11,6 +13,22 @@ use windows::Win32::{
 		SPI_GETMOUSESPEED, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
 	},
 };
+
+#[derive(Default, Clone)]
+struct MouseEventState {
+	left_down: bool,
+	right_down: bool,
+	middle_down: bool,
+	left_clicks: u64,
+	right_clicks: u64,
+	middle_clicks: u64,
+}
+
+static MOUSE_STATE: OnceLock<RwLock<MouseEventState>> = OnceLock::new();
+
+fn mouse_state() -> &'static RwLock<MouseEventState> {
+	MOUSE_STATE.get_or_init(|| RwLock::new(MouseEventState::default()))
+}
 
 pub fn get_mouse_json() -> Value {
 	unsafe {
@@ -42,6 +60,34 @@ pub fn get_mouse_json() -> Value {
 			SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
 		);
 
+		let left_down = (GetAsyncKeyState(VK_LBUTTON.0.into()) as u16 & 0x8000) != 0;
+		let right_down = (GetAsyncKeyState(VK_RBUTTON.0.into()) as u16 & 0x8000) != 0;
+		let middle_down = (GetAsyncKeyState(VK_MBUTTON.0.into()) as u16 & 0x8000) != 0;
+
+		let mut clicked = Vec::<&str>::new();
+		let (left_clicks, right_clicks, middle_clicks) = {
+			let mut state = mouse_state().write().unwrap();
+
+			if left_down && !state.left_down {
+				state.left_clicks = state.left_clicks.saturating_add(1);
+				clicked.push("left");
+			}
+			if right_down && !state.right_down {
+				state.right_clicks = state.right_clicks.saturating_add(1);
+				clicked.push("right");
+			}
+			if middle_down && !state.middle_down {
+				state.middle_clicks = state.middle_clicks.saturating_add(1);
+				clicked.push("middle");
+			}
+
+			state.left_down = left_down;
+			state.right_down = right_down;
+			state.middle_down = middle_down;
+
+			(state.left_clicks, state.right_clicks, state.middle_clicks)
+		};
+
 		json!({
 			"present": mouse_present,
 			"cursor": {
@@ -51,6 +97,15 @@ pub fn get_mouse_json() -> Value {
 			"buttons": {
 				"count": num_buttons,
 				"swapped": buttons_swapped,
+				"left_down": left_down,
+				"right_down": right_down,
+				"middle_down": middle_down,
+				"left_clicks": left_clicks,
+				"right_clicks": right_clicks,
+				"middle_clicks": middle_clicks,
+			},
+			"events": {
+				"clicked": clicked,
 			},
 			"wheel_present": wheel_present,
 			"speed": mouse_speed,

@@ -64,6 +64,7 @@ pub fn get_time_json() -> serde_json::Value {
         "boot_time_unix": boot_time_unix,
         "human": now.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
         "human_date": now.format("%Y-%m-%d").to_string(),
+        "date_formatted": now.format("%Y-%m-%d").to_string(),
         "human_time": now.format("%H:%M:%S").to_string(),
         "am_pm": am_pm,
         "hour_12": hour_12,

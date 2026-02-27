@@ -30,6 +30,10 @@ pub struct BackendConfig {
     #[serde(default = "default_false")]
     pub refresh_on_request: bool,
 
+    /// Whether an open Sentinel UI should force active data updates via heartbeat.
+    #[serde(default = "default_true")]
+    pub ui_data_exception_enabled: bool,
+
     // -- back-compat: silently absorb the old single-rate field if present --
     #[serde(default, skip_serializing)]
     #[allow(dead_code)]
@@ -39,6 +43,7 @@ pub struct BackendConfig {
 fn default_fast_rate() -> u64 { 50 }
 fn default_slow_rate() -> u64 { 1000 }
 fn default_false()     -> bool { false }
+fn default_true()      -> bool { true }
 
 impl Default for BackendConfig {
     fn default() -> Self {
@@ -47,6 +52,7 @@ impl Default for BackendConfig {
             slow_pull_rate_ms: default_slow_rate(),
             data_pull_paused: false,
             refresh_on_request: default_false(),
+            ui_data_exception_enabled: default_true(),
             data_pull_rate_ms: None,
         }
     }
@@ -58,11 +64,13 @@ static FAST_PULL_RATE_MS: AtomicU64  = AtomicU64::new(50);
 static SLOW_PULL_RATE_MS: AtomicU64  = AtomicU64::new(1000);
 static PULL_PAUSED:       AtomicBool = AtomicBool::new(false);
 static REFRESH_ON_REQ:    AtomicBool = AtomicBool::new(false);
+static UI_DATA_EXCEPTION_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub fn fast_pull_rate_ms() -> u64    { FAST_PULL_RATE_MS.load(Ordering::Relaxed) }
 pub fn slow_pull_rate_ms() -> u64    { SLOW_PULL_RATE_MS.load(Ordering::Relaxed) }
 pub fn pull_paused()       -> bool   { PULL_PAUSED.load(Ordering::Relaxed) }
 pub fn refresh_on_request() -> bool  { REFRESH_ON_REQ.load(Ordering::Relaxed) }
+pub fn ui_data_exception_enabled() -> bool { UI_DATA_EXCEPTION_ENABLED.load(Ordering::Relaxed) }
 
 /// Set the fast-tier pull rate at runtime and persist to disk.
 pub fn set_fast_pull_rate_ms(ms: u64) {
@@ -70,6 +78,7 @@ pub fn set_fast_pull_rate_ms(ms: u64) {
     FAST_PULL_RATE_MS.store(clamped, Ordering::Relaxed);
     update_and_save(|cfg| cfg.fast_pull_rate_ms = clamped);
     info!("Fast pull rate set to {}ms", clamped);
+    crate::ipc::data_updater::wake_updaters();
 }
 
 /// Set the slow-tier pull rate at runtime and persist to disk.
@@ -78,6 +87,7 @@ pub fn set_slow_pull_rate_ms(ms: u64) {
     SLOW_PULL_RATE_MS.store(clamped, Ordering::Relaxed);
     update_and_save(|cfg| cfg.slow_pull_rate_ms = clamped);
     info!("Slow pull rate set to {}ms", clamped);
+    crate::ipc::data_updater::wake_updaters();
 }
 
 /// Set the paused state at runtime and persist to disk.
@@ -85,6 +95,7 @@ pub fn set_pull_paused(paused: bool) {
     PULL_PAUSED.store(paused, Ordering::Relaxed);
     update_and_save(|cfg| cfg.data_pull_paused = paused);
     info!("Data pull paused: {}", paused);
+    crate::ipc::data_updater::wake_updaters();
 }
 
 /// Set refresh-on-request at runtime and persist to disk.
@@ -92,6 +103,13 @@ pub fn set_refresh_on_request(enabled: bool) {
     REFRESH_ON_REQ.store(enabled, Ordering::Relaxed);
     update_and_save(|cfg| cfg.refresh_on_request = enabled);
     info!("Refresh on request: {}", enabled);
+}
+
+/// Enable/disable UI-open heartbeat exception for background data updates.
+pub fn set_ui_data_exception_enabled(enabled: bool) {
+    UI_DATA_EXCEPTION_ENABLED.store(enabled, Ordering::Relaxed);
+    update_and_save(|cfg| cfg.ui_data_exception_enabled = enabled);
+    info!("UI data exception enabled: {}", enabled);
 }
 
 // ── Persistent on-disk config ──
@@ -139,6 +157,7 @@ pub fn load_config() -> BackendConfig {
     SLOW_PULL_RATE_MS.store(cfg.slow_pull_rate_ms.min(10000), Ordering::Relaxed);
     PULL_PAUSED.store(cfg.data_pull_paused, Ordering::Relaxed);
     REFRESH_ON_REQ.store(cfg.refresh_on_request, Ordering::Relaxed);
+    UI_DATA_EXCEPTION_ENABLED.store(cfg.ui_data_exception_enabled, Ordering::Relaxed);
 
     // Store in global
     *global_config().write().unwrap() = cfg.clone();

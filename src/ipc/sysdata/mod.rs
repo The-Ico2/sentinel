@@ -16,3 +16,4 @@ pub mod wifi;
 pub mod system;
 pub mod processes;
 pub mod idle;
+pub mod media;

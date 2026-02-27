@@ -583,6 +583,11 @@ fn run_sentinel_custom_tabs_shell(
                                             ("set_refresh_on_request", serde_json::json!({"enabled": enabled}))
                                         } else { return; }
                                     }
+                                    "ui_data_exception_enabled" => {
+                                        if let Some(enabled) = value.as_bool() {
+                                            ("set_ui_data_exception_enabled", serde_json::json!({"enabled": enabled}))
+                                        } else { return; }
+                                    }
                                     _ => {
                                         warn!("[ui] Unknown backend setting key: {}", key);
                                         return;
@@ -671,10 +676,11 @@ fn run_sentinel_custom_tabs_shell(
         let mut cached_config_json = String::new();
         let mut last_registry_push = std::time::Instant::now();
         let mut last_config_push = std::time::Instant::now();
+        let mut last_ui_heartbeat = std::time::Instant::now();
         let snapshot_home = sentinel_home.clone();
 
         event_loop.run(move |event, _, control_flow| {
-                const UI_POLL_MS_ACTIVE_DATA: u64 = 500;
+                const UI_POLL_MS_ACTIVE_DATA: u64 = 80;
             const UI_POLL_MS_ACTIVE_ADDON: u64 = 900;
                 const UI_POLL_MS_IDLE: u64 = 750;
                 let current_view_mode = ui_view_mode
@@ -692,6 +698,18 @@ fn run_sentinel_custom_tabs_shell(
                 *control_flow = ControlFlow::WaitUntil(
                     std::time::Instant::now() + std::time::Duration::from_millis(ui_poll_ms)
                 );
+
+                // Notify daemon that UI is open so it can keep all data
+                // updating while the shell is visible.
+                if last_ui_heartbeat.elapsed() >= std::time::Duration::from_millis(500) {
+                    last_ui_heartbeat = std::time::Instant::now();
+                    let req = crate::ipc::request::IpcRequest {
+                        ns: "backend".to_string(),
+                        cmd: "ui_heartbeat".to_string(),
+                        args: None,
+                    };
+                    let _ = crate::ipc::request::send_ipc_request(req);
+                }
 
                 // Periodic monitor polling for live UI updates (every 2s)
                 if addon_view_active
@@ -742,10 +760,11 @@ fn run_sentinel_custom_tabs_shell(
                     }
                 }
 
-                // Push live registry data to the Data page.
+                // Push live registry data to the Data page via IPC.
                 // The UI runs in a separate process from the backend daemon,
-                // so global_registry() here is empty. Read the registry.json
-                // snapshot that the daemon writes to disk instead.
+                // so global_registry() is empty here.  Fetch the full snapshot
+                // through the named-pipe IPC (registry/full) so we get the
+                // live in-memory state including __meta, addons, and assets.
                 let registry_poll_ms = if data_view_active {
                     UI_POLL_MS_ACTIVE_DATA
                 } else if addon_view_active {
@@ -758,15 +777,23 @@ fn run_sentinel_custom_tabs_shell(
                     && last_registry_push.elapsed() >= std::time::Duration::from_millis(registry_poll_ms)
                 {
                     last_registry_push = std::time::Instant::now();
-                    let registry_path = snapshot_home.join("registry.json");
-                    if let Ok(json_str) = std::fs::read_to_string(&registry_path) {
-                        // Only push if data actually changed
-                        if json_str != cached_registry_json {
-                            cached_registry_json = json_str.clone();
-                            let _ = webview.evaluate_script(&format!(
-                                "if(typeof __sentinelPushRegistry==='function')__sentinelPushRegistry({});",
-                                json_str
-                            ));
+                    let req = crate::ipc::request::IpcRequest {
+                        ns: "registry".to_string(),
+                        cmd: "full".to_string(),
+                        args: None,
+                    };
+                    if let Ok(resp) = crate::ipc::request::send_ipc_request(req) {
+                        if resp.ok {
+                            if let Some(data) = resp.data {
+                                let json_str = data.to_string();
+                                if json_str != cached_registry_json {
+                                    cached_registry_json = json_str.clone();
+                                    let _ = webview.evaluate_script(&format!(
+                                        "if(typeof __sentinelPushRegistry==='function')__sentinelPushRegistry({});",
+                                        json_str
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -2204,20 +2231,42 @@ fn build_sentinel_custom_tabs_shell_html(
         }}
         /* ── Data panel cards ─────────────────────── */
         .data-panels-grid {{
-            columns: 3 300px;
+            columns: 3 260px;
             column-gap: 16px;
         }}
         .data-panel {{
             background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-lg);
-            overflow: hidden;
+            overflow: visible;
+            position: relative;
             break-inside: avoid;
             margin-bottom: 16px;
             transition: border-color var(--transition-fast);
         }}
         .data-panel:hover {{
             border-color: var(--accent-border);
+        }}
+        .data-panel.untracked {{
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px var(--accent-subtle) inset;
+        }}
+        .data-panel-state-pill {{
+            position: absolute;
+            top: -11px;
+            left: 12px;
+            padding: 1px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--accent-border);
+            background: var(--bg-surface);
+            color: var(--accent);
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            line-height: 1.5;
+            pointer-events: none;
+            z-index: 2;
         }}
         .data-panel-header {{
             display: flex;
@@ -2957,37 +3006,60 @@ fn build_sentinel_custom_tabs_shell_html(
 
         window.__sentinelOnConfigPush = function(cfg) {{
             window.__sentinelConfig = cfg || {{}};
-            if (viewMode !== 'settings') return;
 
-            var fastEl = document.getElementById('cfg-fast-rate');
-            var slowEl = document.getElementById('cfg-slow-rate');
-            var rorEl = document.getElementById('cfg-refresh-on-req');
-            var pauseEl = document.getElementById('cfg-pull-paused');
+            if (viewMode === 'settings') {{
+                var fastEl = document.getElementById('cfg-fast-rate');
+                var slowEl = document.getElementById('cfg-slow-rate');
+                var rorEl = document.getElementById('cfg-refresh-on-req');
+                var pauseEl = document.getElementById('cfg-pull-paused');
 
-            var nextFast = Number((window.__sentinelConfig && window.__sentinelConfig.fast_pull_rate_ms) || 50);
-            var nextSlow = Number((window.__sentinelConfig && window.__sentinelConfig.slow_pull_rate_ms) || 500);
-            var nextRor = !!(window.__sentinelConfig && window.__sentinelConfig.refresh_on_request !== false);
-            var nextPaused = !!(window.__sentinelConfig && window.__sentinelConfig.data_pull_paused === true);
+                var nextFast = Number((window.__sentinelConfig && window.__sentinelConfig.fast_pull_rate_ms) || 50);
+                var nextSlow = Number((window.__sentinelConfig && window.__sentinelConfig.slow_pull_rate_ms) || 500);
+                var nextRor = !!(window.__sentinelConfig && window.__sentinelConfig.refresh_on_request !== false);
+                var nextPaused = !!(window.__sentinelConfig && window.__sentinelConfig.data_pull_paused === true);
 
-            if (fastEl && Number(fastEl.value) !== nextFast) fastEl.value = String(nextFast);
-            if (slowEl && Number(slowEl.value) !== nextSlow) slowEl.value = String(nextSlow);
-            if (rorEl && rorEl.checked !== nextRor) rorEl.checked = nextRor;
-            if (pauseEl && pauseEl.checked !== nextPaused) pauseEl.checked = nextPaused;
+                if (fastEl && Number(fastEl.value) !== nextFast) fastEl.value = String(nextFast);
+                if (slowEl && Number(slowEl.value) !== nextSlow) slowEl.value = String(nextSlow);
+                if (rorEl && rorEl.checked !== nextRor) rorEl.checked = nextRor;
+                if (pauseEl && pauseEl.checked !== nextPaused) pauseEl.checked = nextPaused;
+            }}
+
+            if (viewMode === 'data') {{
+                var uiExceptionEl = document.getElementById('cfg-ui-data-exception');
+                var nextUiException = !!(window.__sentinelConfig && window.__sentinelConfig.ui_data_exception_enabled !== false);
+                if (uiExceptionEl && uiExceptionEl.checked !== nextUiException) uiExceptionEl.checked = nextUiException;
+            }}
         }};
 
         function renderDataPage() {{
             const header = document.getElementById('page-header');
             const content = document.getElementById('page-content');
-            var dataPollRate = (window.__sentinelConfig && window.__sentinelConfig.slow_pull_rate_ms) || 500;
-            header.innerHTML = '<h2>Data</h2><p style="color:var(--text-dim);margin:4px 0 0;"><span class="data-connection-dot live"></span>Live registry — updates every ' + dataPollRate + 'ms</p>';
+            var dataPollRate = (window.__sentinelConfig && window.__sentinelConfig.fast_pull_rate_ms) || 80;
+            header.innerHTML = '<h2>Data</h2><p style="color:var(--text-dim);margin:4px 0 0;"><span class="data-connection-dot live"></span>Live registry via IPC — fast tier ' + dataPollRate + 'ms</p>';
+            var uiDataExceptionEnabled = !!(window.__sentinelConfig && window.__sentinelConfig.ui_data_exception_enabled !== false);
             var chips = ['All','Hardware','Network','Input','System','App','JSON'];
             window.__dataActiveChip = window.__dataActiveChip || 'All';
             content.innerHTML =
+                '<div class="page-settings-group" style="padding:12px 14px;margin-bottom:12px;">' +
+                    '<div class="setting-row" style="padding:4px 0;border-bottom:none;">' +
+                        '<span class="s-label">Sentinel UI Data Exception</span>' +
+                        '<label class="s-toggle"><input type="checkbox" id="cfg-ui-data-exception"' + (uiDataExceptionEnabled ? ' checked' : '') + '><span class="s-slider"></span></label>' +
+                    '</div>' +
+                    '<p style="color:var(--text-dim);font-size:12px;margin:4px 0 0;">When enabled, opening Sentinel UI keeps all data updates active via UI heartbeat.</p>' +
+                '</div>' +
                 '<div class="data-filter">' +
                     chips.map(function(c) {{ return '<button class="data-filter-chip' + (c === window.__dataActiveChip ? ' active' : '') + '">' + c + '</button>'; }}).join('') +
                 '</div>' +
                 '<div id="data-panels-container" class="data-panels-grid"></div>' +
                 '<div id="data-json-fallback" class="data-json-wrap" style="display:none;"><pre id="data-json-pre">Loading\u2026</pre></div>';
+
+            var uiExceptionEl = document.getElementById('cfg-ui-data-exception');
+            if (uiExceptionEl) uiExceptionEl.addEventListener('change', function() {{
+                if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
+                window.__sentinelConfig.ui_data_exception_enabled = uiExceptionEl.checked;
+                window.__sentinelBridgePost({{ type: 'backend_setting', key: 'ui_data_exception_enabled', value: uiExceptionEl.checked }});
+            }});
+
             content.querySelectorAll('.data-filter-chip').forEach(function(chip) {{
                 chip.onclick = function() {{
                     window.__dataActiveChip = chip.textContent;
@@ -3003,7 +3075,7 @@ fn build_sentinel_custom_tabs_shell_html(
             }}
         }}
 
-        const DATA_RENDER_MIN_INTERVAL_MS = 800;
+        const DATA_RENDER_MIN_INTERVAL_MS = 100;
         window.__dataRenderTimer = null;
         window.__dataRenderScheduled = false;
         window.__lastDataRenderTs = 0;
@@ -3060,10 +3132,15 @@ fn build_sentinel_custom_tabs_shell_html(
             'Hardware': ['cpu','gpu','ram','storage','displays'],
             'Network': ['network','wifi','bluetooth'],
             'Input': ['keyboard','mouse','audio'],
-            'System': ['time','power','idle','system','processes'],
-            'App': ['appdata'],
+            'System': ['time','power','idle','system','processes','registry_meta'],
+            'App': ['appdata','addons','assets'],
             'JSON': ['__json__']
         }};
+
+        var KNOWN_SYSDATA_KEYS = [
+            'time','cpu','gpu','ram','storage','displays','network','wifi','bluetooth',
+            'audio','keyboard','mouse','power','idle','system','processes'
+        ];
 
         function fmtBytes(b) {{
             if (!b && b !== 0) return '—';
@@ -3083,9 +3160,19 @@ fn build_sentinel_custom_tabs_shell_html(
             return '<div class="data-row"><span class="data-row-label">' + label + '</span><span class="data-row-value">' + (value != null ? value : '\u2014') + '</span></div>';
         }}
 
+        function panelIsUntracked(key) {{
+            if (window.__panelTrackedByMeta && typeof window.__panelTrackedByMeta[key] === 'boolean') {{
+                return !window.__panelTrackedByMeta[key];
+            }}
+            return false;
+        }}
+
         function panelCard(key, title, subtitle, bodyHtml) {{
             var icon = PANEL_ICONS[key] || PANEL_ICONS.system;
-            return '<div class="data-panel" data-panel-key="' + key + '">' +
+            var untracked = panelIsUntracked(key);
+            var statePill = untracked ? '<div class="data-panel-state-pill">Untracked</div>' : '';
+            return '<div class="data-panel' + (untracked ? ' untracked' : '') + '" data-panel-key="' + key + '">' +
+                statePill +
                 '<div class="data-panel-header">' +
                     '<div class="data-panel-icon">' + icon + '</div>' +
                     '<div><div class="data-panel-title">' + title + '</div>' +
@@ -3491,6 +3578,78 @@ fn build_sentinel_custom_tabs_shell_html(
             return panelCard('appdata', 'Active Windows', monitors.length + ' monitor(s)', body);
         }}
 
+        function buildAddonsPanel(addons) {{
+            if (!Array.isArray(addons)) return '';
+            var body = '';
+            body += dataRow('Installed', addons.length);
+            addons.slice(0, 12).forEach(function(addon) {{
+                var id = addon && addon.id ? addon.id : '?';
+                var version = addon && addon.metadata && addon.metadata.version ? ' v' + addon.metadata.version : '';
+                var display = addon && addon.metadata && addon.metadata.name ? addon.metadata.name + version : (version.trim() || '—');
+                body += dataRow(id, display);
+            }});
+            if (addons.length > 12) body += dataRow('More', '+' + (addons.length - 12));
+            return panelCard('appdata', 'Addons', null, body);
+        }}
+
+        function buildAssetsPanel(assets) {{
+            if (!assets || typeof assets !== 'object') return '';
+            var categories = Object.keys(assets);
+            var total = 0;
+            categories.forEach(function(cat) {{
+                var arr = assets[cat];
+                if (Array.isArray(arr)) total += arr.length;
+            }});
+
+            var body = '';
+            body += dataRow('Total Assets', total);
+            categories.sort().forEach(function(cat) {{
+                var arr = assets[cat];
+                var count = Array.isArray(arr) ? arr.length : 0;
+                body += dataRow(cat, count);
+            }});
+
+            return panelCard('appdata', 'Assets', categories.length + ' categor' + (categories.length === 1 ? 'y' : 'ies'), body);
+        }}
+
+        function buildRegistryMetaPanel(meta) {{
+            if (!meta || typeof meta !== 'object') return '';
+            var body = '';
+            if (meta.written_ms != null) body += dataRow('Written (ms)', String(meta.written_ms));
+            if (meta.tracking_active != null) body += dataRow('Tracking Active', meta.tracking_active ? '<span class="data-tag online">Yes</span>' : '<span class="data-tag offline">No</span>');
+            var sections = meta.sections && typeof meta.sections === 'object' ? Object.keys(meta.sections) : [];
+            body += dataRow('Sections', sections.length);
+            sections.slice(0, 16).forEach(function(sectionKey) {{
+                var tracked = !(meta.sections[sectionKey] && meta.sections[sectionKey].tracked === false);
+                body += dataRow(sectionKey, tracked ? '<span class="data-tag online">Tracked</span>' : '<span class="data-tag offline">Untracked</span>');
+            }});
+            if (sections.length > 16) body += dataRow('More', '+' + (sections.length - 16));
+            return panelCard('system', 'Registry Meta', null, body);
+        }}
+
+        function buildUnknownSysdataPanels(sys) {{
+            if (!sys || typeof sys !== 'object') return '';
+            var html = '';
+            Object.keys(sys).forEach(function(key) {{
+                if (KNOWN_SYSDATA_KEYS.indexOf(key) !== -1) return;
+                var value = sys[key];
+                var pretty = '';
+                try {{
+                    pretty = JSON.stringify(value, null, 2);
+                }} catch (_) {{
+                    pretty = String(value);
+                }}
+                if (pretty.length > 2000) pretty = pretty.substring(0, 2000) + '\n…';
+                var escaped = pretty
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+                var body = '<div class="data-json-wrap" style="display:block;margin:0;"><pre style="max-height:220px;">' + escaped + '</pre></div>';
+                html += panelCard('system', key, 'sysdata', body);
+            }});
+            return html;
+        }}
+
         function renderDataPanels(data) {{
             var container = document.getElementById('data-panels-container');
             var jsonFallback = document.getElementById('data-json-fallback');
@@ -3515,9 +3674,30 @@ fn build_sentinel_custom_tabs_shell_html(
 
             var allowed = FILTER_MAP[filter];
             var sys = data.sysdata || {{}};
+            var sectionMeta = (data.__meta && data.__meta.sections) || {{}};
             var html = '';
 
             function shouldShow(key) {{ return !allowed || allowed.indexOf(key) !== -1; }}
+
+            window.__panelTrackedByMeta = {{
+                time: !(sectionMeta.time && sectionMeta.time.tracked === false),
+                cpu: !(sectionMeta.cpu && sectionMeta.cpu.tracked === false),
+                gpu: !(sectionMeta.gpu && sectionMeta.gpu.tracked === false),
+                ram: !(sectionMeta.ram && sectionMeta.ram.tracked === false),
+                storage: !(sectionMeta.storage && sectionMeta.storage.tracked === false),
+                displays: !(sectionMeta.displays && sectionMeta.displays.tracked === false),
+                network: !(sectionMeta.network && sectionMeta.network.tracked === false),
+                wifi: !(sectionMeta.wifi && sectionMeta.wifi.tracked === false),
+                bluetooth: !(sectionMeta.bluetooth && sectionMeta.bluetooth.tracked === false),
+                audio: !(sectionMeta.audio && sectionMeta.audio.tracked === false),
+                keyboard: !(sectionMeta.keyboard && sectionMeta.keyboard.tracked === false),
+                mouse: !(sectionMeta.mouse && sectionMeta.mouse.tracked === false),
+                power: !(sectionMeta.power && sectionMeta.power.tracked === false),
+                idle: !(sectionMeta.idle && sectionMeta.idle.tracked === false),
+                system: !(sectionMeta.system && sectionMeta.system.tracked === false),
+                processes: !(sectionMeta.processes && sectionMeta.processes.tracked === false),
+                appdata: !(sectionMeta.appdata && sectionMeta.appdata.tracked === false),
+            }};
 
             if (shouldShow('time'))       html += buildTimePanel(sys.time);
             if (shouldShow('cpu'))        html += buildCpuPanel(sys.cpu);
@@ -3536,6 +3716,10 @@ fn build_sentinel_custom_tabs_shell_html(
             if (shouldShow('system'))     html += buildSystemPanel(sys.system);
             if (shouldShow('processes'))  html += buildProcessesPanel(sys.processes);
             if (shouldShow('appdata'))    html += buildAppdataPanel(data.appdata);
+            if (shouldShow('addons'))     html += buildAddonsPanel(data.addons);
+            if (shouldShow('assets'))     html += buildAssetsPanel(data.assets);
+            if (shouldShow('registry_meta')) html += buildRegistryMetaPanel(data.__meta);
+            if (!allowed)                 html += buildUnknownSysdataPanels(sys);
 
             container.innerHTML = html || '<div style="color:var(--text-dim);padding:20px;">No data for this filter</div>';
         }}
