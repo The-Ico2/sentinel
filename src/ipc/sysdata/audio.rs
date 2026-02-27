@@ -11,7 +11,6 @@ use std::{
 	time::Duration,
 };
 use rustfft::{FftPlanner, num_complex::Complex};
-use super::media;
 use windows::Win32::{
 	Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
 	Media::Audio::{
@@ -164,7 +163,6 @@ pub fn get_audio_json() -> Value {
 	unsafe {
 		let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 	}
-	media::refresh_media_session_cache_if_due();
 	start_spectrum_capture_once();
 
 	AUDIO_STATE.with(|cell| {
@@ -297,7 +295,7 @@ pub fn get_audio_json() -> Value {
 				"volume_percent": (input_volume * 100.0).round(),
 				"muted": input_muted,
 			},
-			"media_session": media::get_media_session_json(),
+			"media_session": {},
 			"spectrum_32": spectrum_cache().read().map(|s| s.to_vec()).unwrap_or_default(),
 		})
 	})
