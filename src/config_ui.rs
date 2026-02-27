@@ -55,6 +55,7 @@ struct CustomTabShellPage {
 struct CustomTabShellAddon {
     id: String,
     name: String,
+    version: Option<String>,
     tabs: Vec<CustomTabShellPage>,
 }
 
@@ -174,6 +175,8 @@ struct ShellIpcMessage {
     manifest_path: Option<String>,
     // For ui_view_mode
     view_mode: Option<String>,
+    // For open_external_url
+    url: Option<String>,
 }
 
 fn parse_shell_ipc_message(body: &str) -> Option<ShellIpcMessage> {
@@ -628,6 +631,27 @@ fn run_sentinel_custom_tabs_shell(
                                     }
                                 }
                             }
+                            "open_external_url" => {
+                                let Some(url) = message.url else {
+                                    warn!("[ui] open_external_url missing url");
+                                    return;
+                                };
+
+                                let trimmed = url.trim();
+                                if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+                                    warn!("[ui] Rejected non-http(s) external URL: {}", trimmed);
+                                    return;
+                                }
+
+                                if cfg!(target_os = "windows") {
+                                    match std::process::Command::new("explorer").arg(trimmed).spawn() {
+                                        Ok(_) => warn!("[ui] Opened external URL: {}", trimmed),
+                                        Err(e) => warn!("[ui] Failed to open external URL '{}': {}", trimmed, e),
+                                    }
+                                } else {
+                                    warn!("[ui] open_external_url currently supported on Windows only");
+                                }
+                            }
                             other => {
                                 warn!("[ui] Unhandled IPC message kind: '{}'", other);
                             }
@@ -870,9 +894,15 @@ fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellA
                         continue;
                 }
 
+                let addon_version = std::fs::read_to_string(addon.addon_root.join("addon.json"))
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                    .and_then(|json| json.get("version").and_then(|v| v.as_str().map(|s| s.to_string())));
+
                 out.push(CustomTabShellAddon {
                         id: addon.id.clone(),
                         name: addon.name.clone(),
+                    version: addon_version,
                         tabs: shell_tabs,
                 });
         }
@@ -1724,6 +1754,7 @@ fn build_sentinel_custom_tabs_shell_html(
 ) -> Result<String, Box<dyn std::error::Error>> {
         let addons_json = serde_json::to_string(addons)?;
         let selected_json = serde_json::to_string(selected_addon_id)?;
+    let backend_version_json = serde_json::to_string(env!("CARGO_PKG_VERSION"))?;
 
         Ok(format!(
                 r#"<!doctype html>
@@ -1963,6 +1994,7 @@ fn build_sentinel_custom_tabs_shell_html(
             display: flex;
             align-items: center;
             gap: 14px;
+            overflow: hidden;
         }}
         .addon-card:hover {{
             border-color: var(--accent-border);
@@ -1984,11 +2016,87 @@ fn build_sentinel_custom_tabs_shell_html(
             font-size: 14px;
             font-weight: 600;
             margin-bottom: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
         }}
         .addon-card-info span {{
             font-size: 12px;
             color: var(--text-tertiary);
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
         }}
+        .store-card {{
+            align-items: flex-start;
+            cursor: default;
+        }}
+        .store-card:hover {{
+            transform: none;
+            box-shadow: none;
+        }}
+        .store-card .addon-card-info {{
+            flex: 1;
+            width: 100%;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            overflow: hidden;
+        }}
+        .store-repo {{
+            font-size: 12px;
+            color: var(--text-tertiary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .store-meta {{
+            display: grid;
+            gap: 6px;
+            margin-top: 2px;
+            width: 100%;
+            min-width: 0;
+        }}
+        .store-meta-row {{
+            display: grid;
+            grid-template-columns: 78px minmax(0, 1fr);
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            min-width: 0;
+        }}
+        .store-meta-label {{
+            color: var(--text-dim);
+            flex-shrink: 0;
+        }}
+        .store-meta-value {{
+            display: block;
+            color: var(--text-secondary);
+            text-align: right;
+            width: 100%;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .store-actions {{
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+        }}
+        .store-btn {{
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            line-height: 1;
+        }}
+        .updater-status.ok {{ color: #22c55e; }}
+        .updater-status.warn {{ color: #f59e0b; }}
+        .updater-status.dim {{ color: var(--text-dim); }}
         .page-settings-group {{
             background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
@@ -2371,6 +2479,21 @@ fn build_sentinel_custom_tabs_shell_html(
                         <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
                     </svg>
                 </button>
+                <button class="quick-action-btn" data-tooltip="Store">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="9" cy="21" r="1"/>
+                        <circle cx="20" cy="21" r="1"/>
+                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h8.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                    </svg>
+                </button>
+                <button class="quick-action-btn" data-tooltip="Updater">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="23 4 23 10 17 10"/>
+                        <polyline points="1 20 1 14 7 14"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"/>
+                        <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"/>
+                    </svg>
+                </button>
             </div>
         </div>
     </div>
@@ -2388,6 +2511,7 @@ fn build_sentinel_custom_tabs_shell_html(
     <script>
         const ADDONS = {addons_json};
         let currentAddonId = {selected_json};
+        const BACKEND_CURRENT_VERSION = {backend_version_json};
         let currentTabId = null;
 
         const ADDON_ICONS = {{
@@ -2398,12 +2522,108 @@ fn build_sentinel_custom_tabs_shell_html(
 
         const DEFAULT_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>';
 
+        const STORE_ADDONS = [
+            {{ id: 'sentinel-windowmanager', name: 'Window Manager', owner: 'The-Ico2', repo: 'sentinel-windowmanager' }},
+            {{ id: 'sentinel-wallpaper', name: 'Wallpaper', owner: 'The-Ico2', repo: 'sentinel-wallpaper' }},
+            {{ id: 'sentinel-statusbar', name: 'Status Bar', owner: 'The-Ico2', repo: 'sentinel-statusbar' }},
+            {{ id: 'sentinel', name: 'Sentinel Core', owner: 'The-Ico2', repo: 'Sentinel' }}
+        ];
+
+        function escapeHtml(value) {{
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }}
+
+        function fmtReleaseDate(iso) {{
+            if (!iso) return '\u2014';
+            const date = new Date(iso);
+            if (!date || Number.isNaN(date.getTime())) return '\u2014';
+            return date.toLocaleDateString(undefined, {{ year: 'numeric', month: 'short', day: 'numeric' }});
+        }}
+
+        function repoPageUrl(addon) {{
+            return 'https://github.com/' + addon.owner + '/' + addon.repo;
+        }}
+
+        function releasePageUrl(addon, release) {{
+            if (release && release.html_url) return release.html_url;
+            return repoPageUrl(addon) + '/releases';
+        }}
+
+        function normalizeVersion(value) {{
+            if (value == null) return '';
+            return String(value).trim().replace(/^v/i, '').toLowerCase();
+        }}
+
+        function updateStatus(current, latestTag) {{
+            if (!latestTag) return 'Unknown';
+            if (!current) return 'Not installed';
+            return normalizeVersion(current) === normalizeVersion(latestTag) ? 'Up to date' : 'Update available';
+        }}
+
+        function normalizeAddonToken(value) {{
+            return String(value == null ? '' : value)
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, '');
+        }}
+
+        function stripSentinelPrefix(value) {{
+            return String(value == null ? '' : value)
+                .toLowerCase()
+                .replace(/^sentinel[-_.]?/i, '');
+        }}
+
+        function addonTokensFromStore(addon) {{
+            const raw = [addon.id, addon.name, addon.repo, stripSentinelPrefix(addon.id), stripSentinelPrefix(addon.repo)];
+            return new Set(raw.map(normalizeAddonToken).filter(Boolean));
+        }}
+
+        function addonTokensFromInstalled(addon) {{
+            const raw = [addon.id, addon.name, stripSentinelPrefix(addon.id), stripSentinelPrefix(addon.name)];
+            return new Set(raw.map(normalizeAddonToken).filter(Boolean));
+        }}
+
+        function resolveInstalledVersionForStoreAddon(storeAddon) {{
+            const storeTokens = addonTokensFromStore(storeAddon);
+            for (const installed of (ADDONS || [])) {{
+                const installedTokens = addonTokensFromInstalled(installed);
+                for (const token of storeTokens) {{
+                    if (installedTokens.has(token)) {{
+                        return installed.version || null;
+                    }}
+                }}
+            }}
+            return null;
+        }}
+
+        async function fetchLatestRelease(addon) {{
+            const apiUrl = 'https://api.github.com/repos/' + addon.owner + '/' + addon.repo + '/releases/latest';
+            try {{
+                const response = await fetch(apiUrl, {{ headers: {{ 'Accept': 'application/vnd.github+json' }} }});
+                if (!response.ok) return null;
+                const release = await response.json();
+                if (!release || !release.tag_name) return null;
+                return release;
+            }} catch (_) {{
+                return null;
+            }}
+        }}
+
         function getAddonIcon(addonId) {{
             const lower = addonId.toLowerCase();
             for (const [key, svg] of Object.entries(ADDON_ICONS)) {{
                 if (lower.includes(key)) return svg;
             }}
             return DEFAULT_ICON;
+        }}
+
+        function openExternalUrl(url) {{
+            if (!url) return;
+            window.__sentinelBridgePost({{ type: 'open_external_url', url: url }});
         }}
 
         window.__sentinelBridgePost = (payload) => {{
@@ -2599,6 +2819,139 @@ fn build_sentinel_custom_tabs_shell_html(
                 if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
                 window.__sentinelConfig.data_pull_paused = pauseEl.checked;
                 window.__sentinelBridgePost({{ type: 'backend_setting', key: 'pull_paused', value: pauseEl.checked }});
+            }});
+        }}
+
+        async function renderStorePage() {{
+            const header = document.getElementById('page-header');
+            const content = document.getElementById('page-content');
+            header.innerHTML = '<h2>Addon Store</h2><p style="color:var(--text-dim);margin:4px 0 0;">Download Sentinel addons from GitHub releases</p>';
+
+            const token = Date.now() + ':' + Math.random().toString(36).slice(2);
+            window.__storeRenderToken = token;
+            content.innerHTML = '<div style="color:var(--text-dim);padding:20px;">Loading release data\u2026</div>';
+
+            const withReleases = [];
+            const releaseResults = await Promise.all(STORE_ADDONS.map(async function(addon) {{
+                const latest = await fetchLatestRelease(addon);
+                return latest ? {{ addon: addon, latest: latest }} : null;
+            }}));
+
+            releaseResults.forEach(function(item) {{ if (item) withReleases.push(item); }});
+            if (window.__storeRenderToken !== token || viewMode !== 'store') return;
+
+            if (withReleases.length === 0) {{
+                content.innerHTML = '<div style="color:var(--text-dim);padding:20px;">No addon releases found right now.</div>';
+                return;
+            }}
+
+            content.innerHTML =
+                '<div class="addon-cards-grid">' +
+                withReleases.map(function(item) {{
+                    const addon = item.addon;
+                    const latest = item.latest;
+                    const repoUrl = repoPageUrl(addon);
+                    const latestUrl = releasePageUrl(addon, latest);
+                    const releaseName = latest.name ? escapeHtml(latest.name) : 'Latest Release';
+                    const tag = escapeHtml(latest.tag_name || '\u2014');
+                    const published = fmtReleaseDate(latest.published_at || latest.created_at);
+                    const prerelease = latest.prerelease ? 'Yes' : 'No';
+
+                    return (
+                        '<div class="addon-card store-card">' +
+                            '<div class="addon-card-icon">' + getAddonIcon(addon.id) + '</div>' +
+                            '<div class="addon-card-info">' +
+                                '<h3>' + escapeHtml(addon.name) + '</h3>' +
+                                '<div class="store-repo">' + escapeHtml(addon.owner + '/' + addon.repo) + '</div>' +
+                                '<div class="store-meta">' +
+                                    '<div class="store-meta-row"><span class="store-meta-label">Version</span><span class="store-meta-value">' + tag + '</span></div>' +
+                                    '<div class="store-meta-row"><span class="store-meta-label">Release</span><span class="store-meta-value">' + releaseName + '</span></div>' +
+                                    '<div class="store-meta-row"><span class="store-meta-label">Published</span><span class="store-meta-value">' + escapeHtml(published) + '</span></div>' +
+                                    '<div class="store-meta-row"><span class="store-meta-label">Pre-release</span><span class="store-meta-value">' + prerelease + '</span></div>' +
+                                '</div>' +
+                                '<div class="store-actions">' +
+                                    '<button class="quick-action-btn store-btn store-open-release" data-url="' + escapeHtml(latestUrl) + '">Open Release</button>' +
+                                    '<button class="quick-action-btn store-btn store-open-repo" data-url="' + escapeHtml(repoUrl) + '">Open Repo</button>' +
+                                '</div>' +
+                            '</div>' +
+                        '</div>'
+                    );
+                }}).join('') +
+                '</div>';
+
+            content.querySelectorAll('.store-open-release,.store-open-repo').forEach(function(btn) {{
+                btn.addEventListener('click', function() {{
+                    openExternalUrl(btn.getAttribute('data-url'));
+                }});
+            }});
+        }}
+
+        async function renderUpdaterPage() {{
+            const header = document.getElementById('page-header');
+            const content = document.getElementById('page-content');
+            header.innerHTML = '<h2>Updater</h2><p style="color:var(--text-dim);margin:4px 0 0;">Compare installed versions with latest GitHub releases</p>';
+
+            const targets = STORE_ADDONS.map(function(addon) {{
+                const current = addon.id === 'sentinel'
+                    ? BACKEND_CURRENT_VERSION
+                    : resolveInstalledVersionForStoreAddon(addon);
+                return {{ addon: addon, current: current }};
+            }});
+
+            const token = Date.now() + ':' + Math.random().toString(36).slice(2);
+            window.__updaterRenderToken = token;
+            content.innerHTML = '<div style="color:var(--text-dim);padding:20px;">Checking releases\u2026</div>';
+
+            const rows = await Promise.all(targets.map(async function(item) {{
+                const latest = await fetchLatestRelease(item.addon);
+                if (!latest) return null;
+                return {{ addon: item.addon, current: item.current, latest: latest }};
+            }}));
+
+            const items = rows.filter(function(row) {{ return !!row; }});
+            if (window.__updaterRenderToken !== token || viewMode !== 'updater') return;
+
+            if (items.length === 0) {{
+                content.innerHTML = '<div style="color:var(--text-dim);padding:20px;">No updater data available right now.</div>';
+                return;
+            }}
+
+            content.innerHTML =
+                '<div class="addon-cards-grid">' +
+                items.map(function(item) {{
+                    const addon = item.addon;
+                    const latest = item.latest;
+                    const latestTag = latest.tag_name || null;
+                    const current = item.current;
+                    const status = updateStatus(current, latestTag);
+                    const statusClass = status === 'Update available' ? 'warn' : (status === 'Up to date' ? 'ok' : 'dim');
+
+                    return (
+                        '<div class="addon-card store-card">' +
+                            '<div class="addon-card-icon">' + getAddonIcon(addon.id) + '</div>' +
+                            '<div class="addon-card-info">' +
+                                '<h3>' + escapeHtml(addon.name) + '</h3>' +
+                                '<div class="store-repo">' + escapeHtml(addon.owner + '/' + addon.repo) + '</div>' +
+                                '<div class="store-meta">' +
+                                    '<div class="store-meta-row"><span class="store-meta-label">Installed</span><span class="store-meta-value">' + escapeHtml(current || 'Not installed') + '</span></div>' +
+                                    '<div class="store-meta-row"><span class="store-meta-label">Latest</span><span class="store-meta-value">' + escapeHtml(latestTag || '\u2014') + '</span></div>' +
+                                    '<div class="store-meta-row"><span class="store-meta-label">Published</span><span class="store-meta-value">' + escapeHtml(fmtReleaseDate(latest.published_at || latest.created_at)) + '</span></div>' +
+                                    '<div class="store-meta-row"><span class="store-meta-label">Status</span><span class="store-meta-value updater-status ' + statusClass + '">' + escapeHtml(status) + '</span></div>' +
+                                '</div>' +
+                                '<div class="store-actions">' +
+                                    '<button class="quick-action-btn store-btn updater-open-release" data-url="' + escapeHtml(releasePageUrl(addon, latest)) + '">Open Release</button>' +
+                                    '<button class="quick-action-btn store-btn updater-open-repo" data-url="' + escapeHtml(repoPageUrl(addon)) + '">Open Repo</button>' +
+                                '</div>' +
+                            '</div>' +
+                        '</div>'
+                    );
+                }}).join('') +
+                '</div>';
+
+            content.querySelectorAll('.updater-open-release,.updater-open-repo').forEach(function(btn) {{
+                btn.addEventListener('click', function() {{
+                    openExternalUrl(btn.getAttribute('data-url'));
+                }});
             }});
         }}
 
@@ -3224,7 +3577,7 @@ fn build_sentinel_custom_tabs_shell_html(
         document.querySelectorAll('.quick-action-btn').forEach(function(btn) {{
             btn.addEventListener('click', function() {{
                 var tip = (btn.getAttribute('data-tooltip') || '').toLowerCase();
-                if (tip === 'home' || tip === 'settings' || tip === 'data') {{
+                if (tip === 'home' || tip === 'settings' || tip === 'data' || tip === 'store' || tip === 'updater') {{
                     viewMode = tip;
                     render();
                 }}
@@ -3251,7 +3604,8 @@ fn build_sentinel_custom_tabs_shell_html(
                 else if (viewMode === 'data') {{
                     renderDataPage();
                     scheduleDataPanelsRender(true);
-                }}
+                }} else if (viewMode === 'store') renderStorePage();
+                else if (viewMode === 'updater') renderUpdaterPage();
             }}
             window.__sentinelBridgePost({{ type: 'ui_view_mode', viewMode: viewMode }});
         }}

@@ -108,6 +108,10 @@ fn acquire_single_instance() -> Option<HANDLE> {
 }
 
 fn main() {
+    // Run self-install/bootstrap before singleton acquisition so a relaunch
+    // from ~/.Sentinel/sentinelc.exe is not blocked by this process mutex.
+    bootstrap_user_root();
+
     let args: Vec<String> = std::env::args().collect();
     let is_ui_mode = args
         .iter()
@@ -127,8 +131,6 @@ fn main() {
     // Enable logging at startup
     logging::init(true);
     info!("Sentinel backend starting");
-
-    bootstrap_user_root();
 
     if std::env::args().count() > 1 {
         info!("CLI mode detected");

@@ -1,6 +1,6 @@
 [package]
 name = "sentinelc"
-version = "1.0.0"
+version = "0.2.2"
 edition = "2021"
 authors = ["Ico2"]
 description = "Sentinel Backend/CLI"
