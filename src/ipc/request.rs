@@ -7,7 +7,7 @@ use windows::Win32::{
         CreateFileW, ReadFile, WriteFile, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
         FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES,
     },
-    System::Pipes::WaitNamedPipeW,
+    System::Pipes::{WaitNamedPipeW, SetNamedPipeHandleState, PIPE_READMODE_MESSAGE},
 };
 use crate::ipc::response::IpcResponse;
 use crate::error;
@@ -58,6 +58,15 @@ pub fn send_ipc_request(request: IpcRequest) -> Result<IpcResponse, String> {
         };
 
         // --- Send request ---
+
+        // Switch the client handle to message-read mode so ReadFile
+        // returns ERROR_MORE_DATA when a message exceeds the read
+        // buffer, instead of silently truncating.
+        {
+            let mut mode = PIPE_READMODE_MESSAGE;
+            let _ = SetNamedPipeHandleState(handle, Some(&mut mode), None, None);
+        }
+
         let payload = match to_vec(&request) {
             Ok(p) => p,
             Err(e) => {

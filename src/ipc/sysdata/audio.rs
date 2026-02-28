@@ -164,6 +164,7 @@ pub fn get_audio_json() -> Value {
 		let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 	}
 	start_spectrum_capture_once();
+	super::media::refresh_media_session_cache_if_due();
 
 	AUDIO_STATE.with(|cell| {
 		const HISTORY_LIMIT: usize = 64;
@@ -295,7 +296,7 @@ pub fn get_audio_json() -> Value {
 				"volume_percent": (input_volume * 100.0).round(),
 				"muted": input_muted,
 			},
-			"media_session": {},
+			"media_session": super::media::get_media_session_json(),
 			"spectrum_32": spectrum_cache().read().map(|s| s.to_vec()).unwrap_or_default(),
 		})
 	})

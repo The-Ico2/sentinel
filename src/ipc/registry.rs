@@ -393,6 +393,7 @@ pub fn registry_to_output_json(reg: &Registry) -> Value {
         ("idle", sysdata_out.get("idle").cloned().unwrap_or(Value::Null)),
         ("system", sysdata_out.get("system").cloned().unwrap_or(Value::Null)),
         ("processes", sysdata_out.get("processes").cloned().unwrap_or(Value::Null)),
+        ("media", sysdata_out.get("media").cloned().unwrap_or(Value::Null)),
         ("appdata", appdata_out.clone()),
     ];
 
@@ -548,6 +549,7 @@ fn output_sysdata(sysdata: &[RegistryEntry]) -> Value {
         "system": category_meta("system"),
         "processes": category_meta("processes"),
         "idle": category_meta("idle"),
+        "media": category_meta("media"),
     })
 }
 

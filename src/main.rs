@@ -26,6 +26,7 @@ use windows::{
     Win32::{
         Foundation::{CloseHandle, GetLastError, HANDLE, ERROR_ALREADY_EXISTS},
         System::Threading::CreateMutexW,
+        UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
     },
 };
 
@@ -108,6 +109,15 @@ fn acquire_single_instance() -> Option<HANDLE> {
 }
 
 fn main() {
+    // Enable per-monitor DPI awareness so GetCursorPos, GetSystemMetrics, and
+    // all display coordinates use physical pixels — matching the coordinate
+    // space of DPI-aware addons (e.g. wallpaper).  Without this, cursor
+    // positions are virtualised by Windows on non-primary monitors with
+    // different DPI, causing wallpaper cursor trails to drift.
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+
     // Run self-install/bootstrap before singleton acquisition so a relaunch
     // from ~/.Sentinel/sentinelc.exe is not blocked by this process mutex.
     bootstrap_user_root();

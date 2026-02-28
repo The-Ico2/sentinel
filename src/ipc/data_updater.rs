@@ -61,7 +61,7 @@ fn interruptible_sleep(dur: Duration) {
 
 const TRACKABLE_SECTIONS: &[&str] = &[
     "time", "cpu", "gpu", "ram", "storage", "displays", "network", "wifi",
-    "bluetooth", "audio", "keyboard", "mouse", "power", "idle", "system",
+    "bluetooth", "audio", "media", "keyboard", "mouse", "power", "idle", "system",
     "processes", "appdata",
 ];
 
@@ -81,6 +81,7 @@ fn normalize_section(section: &str) -> Option<&'static str> {
         "wifi" => Some("wifi"),
         "bluetooth" => Some("bluetooth"),
         "audio" => Some("audio"),
+        "media" => Some("media"),
         "keyboard" => Some("keyboard"),
         "mouse" => Some("mouse"),
         "power" => Some("power"),
@@ -168,6 +169,10 @@ fn single_sys_entry(category: &str) -> Option<RegistryEntry> {
         "system" => Some(RegistryEntry { id: "system".into(), category: "system".into(), subtype: "system".into(), metadata: crate::ipc::sysdata::system::get_system_json(), path: std::path::PathBuf::new(), exe_path: "".into() }),
         "processes" => Some(RegistryEntry { id: "processes".into(), category: "processes".into(), subtype: "system".into(), metadata: crate::ipc::sysdata::processes::get_processes_json(), path: std::path::PathBuf::new(), exe_path: "".into() }),
         "audio" => Some(RegistryEntry { id: "audio".into(), category: "audio".into(), subtype: "system".into(), metadata: crate::ipc::sysdata::audio::get_audio_json(), path: std::path::PathBuf::new(), exe_path: "".into() }),
+        "media" => {
+            crate::ipc::sysdata::media::refresh_media_session_cache_if_due();
+            Some(RegistryEntry { id: "media".into(), category: "media".into(), subtype: "system".into(), metadata: crate::ipc::sysdata::media::get_media_session_json(), path: std::path::PathBuf::new(), exe_path: "".into() })
+        }
         "time" => Some(RegistryEntry { id: "time".into(), category: "time".into(), subtype: "system".into(), metadata: crate::ipc::sysdata::time::get_time_json(), path: std::path::PathBuf::new(), exe_path: "".into() }),
         "keyboard" => Some(RegistryEntry { id: "keyboard".into(), category: "keyboard".into(), subtype: "system".into(), metadata: crate::ipc::sysdata::keyboard::get_keyboard_json(), path: std::path::PathBuf::new(), exe_path: "".into() }),
         "mouse" => Some(RegistryEntry { id: "mouse".into(), category: "mouse".into(), subtype: "system".into(), metadata: crate::ipc::sysdata::mouse::get_mouse_json(), path: std::path::PathBuf::new(), exe_path: "".into() }),
@@ -231,7 +236,7 @@ pub fn start_registry_updater() {
             }
 
             let mut fast_requested = Vec::<&str>::new();
-            for section in ["time", "keyboard", "mouse", "audio", "idle"] {
+            for section in ["time", "keyboard", "mouse", "audio", "media", "idle"] {
                 if section_tracking_enabled(section) {
                     if let Some(cat) = section_to_internal_category(section) {
                         fast_requested.push(cat);

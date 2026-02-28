@@ -2457,6 +2457,159 @@ fn build_sentinel_custom_tabs_shell_html(
             color: var(--accent);
             white-space: nowrap;
         }}
+        /* ── Media panel (stylised) ───────────────── */
+        .media-player {{
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }}
+        .media-hero {{
+            display: flex;
+            gap: 14px;
+            align-items: flex-start;
+            padding-bottom: 12px;
+        }}
+        .media-art {{
+            width: 80px;
+            height: 80px;
+            border-radius: 10px;
+            overflow: hidden;
+            flex-shrink: 0;
+            background: var(--bg-hover);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+            position: relative;
+        }}
+        .media-art img {{
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }}
+        .media-art-placeholder {{
+            color: var(--text-tertiary);
+            opacity: 0.5;
+        }}
+        .media-art-placeholder svg {{ width: 32px; height: 32px; }}
+        .media-info {{
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 2px;
+        }}
+        .media-title {{
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            line-height: 1.3;
+        }}
+        .media-artist {{
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--accent);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            line-height: 1.3;
+        }}
+        .media-album {{
+            font-size: 11px;
+            color: var(--text-dim);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            line-height: 1.3;
+        }}
+        .media-progress {{
+            margin-top: 4px;
+        }}
+        .media-progress-bar {{
+            width: 100%;
+            height: 4px;
+            background: var(--bg-active);
+            border-radius: 2px;
+            overflow: hidden;
+            cursor: default;
+        }}
+        .media-progress-fill {{
+            height: 100%;
+            border-radius: 2px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+            transition: width 0.4s ease;
+            box-shadow: 0 0 8px rgba(220,38,38,0.3);
+        }}
+        .media-time {{
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+            color: var(--text-tertiary);
+            margin-top: 4px;
+        }}
+        .media-meta {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border-subtle);
+        }}
+        .media-chip {{
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 500;
+            background: var(--bg-hover);
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }}
+        .media-chip svg {{ width: 10px; height: 10px; opacity: 0.6; }}
+        .media-chip.active {{ background: var(--accent-subtle); color: var(--accent); }}
+        .media-status-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        .media-status-dot {{
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }}
+        .media-status-dot.playing {{
+            background: #22c55e;
+            box-shadow: 0 0 6px rgba(34,197,94,0.5);
+            animation: mediaPulse 2s ease-in-out infinite;
+        }}
+        .media-status-dot.paused {{ background: #f59e0b; }}
+        .media-status-dot.stopped {{ background: var(--text-tertiary); }}
+        @keyframes mediaPulse {{
+            0%, 100% {{ opacity: 1; }}
+            50% {{ opacity: 0.4; }}
+        }}
+        .media-idle {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 0;
+            gap: 8px;
+            color: var(--text-tertiary);
+        }}
+        .media-idle svg {{ width: 32px; height: 32px; opacity: 0.3; }}
+        .media-idle-text {{ font-size: 12px; }}
         .tab-bar {{
             display: flex;
             gap: 0;
@@ -3124,14 +3277,15 @@ fn build_sentinel_custom_tabs_shell_html(
             displays: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
             processes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
             idle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
-            appdata: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>'
+            appdata: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
+            media: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>'
         }};
 
         var FILTER_MAP = {{
             'All': null,
             'Hardware': ['cpu','gpu','ram','storage','displays'],
             'Network': ['network','wifi','bluetooth'],
-            'Input': ['keyboard','mouse','audio'],
+            'Input': ['keyboard','mouse','audio','media'],
             'System': ['time','power','idle','system','processes','registry_meta'],
             'App': ['appdata','addons','assets'],
             'JSON': ['__json__']
@@ -3139,7 +3293,7 @@ fn build_sentinel_custom_tabs_shell_html(
 
         var KNOWN_SYSDATA_KEYS = [
             'time','cpu','gpu','ram','storage','displays','network','wifi','bluetooth',
-            'audio','keyboard','mouse','power','idle','system','processes'
+            'audio','media','keyboard','mouse','power','idle','system','processes'
         ];
 
         function fmtBytes(b) {{
@@ -3270,6 +3424,7 @@ fn build_sentinel_custom_tabs_shell_html(
                     '<div class="data-stat-item"><div class="data-stat-label">Total</div><div class="data-stat-value">' + fmtBytes(d.total_bytes) + '</div></div>' +
                 '</div>';
             }}
+            if (d.free_bytes != null) body += dataRow('Free', fmtBytes(d.free_bytes));
             if (d.speed_mhz) body += dataRow('Speed', d.speed_mhz + ' MT/s');
             if (d.slots_used != null && d.slots_total != null) body += dataRow('Slots Used', d.slots_used + ' of ' + d.slots_total);
             if (d.form_factor) body += dataRow('Form Factor', d.form_factor);
@@ -3280,6 +3435,40 @@ fn build_sentinel_custom_tabs_shell_html(
             if (d.paged_pool_bytes != null) body += dataRow('Paged Pool', fmtBytes(d.paged_pool_bytes));
             if (d.non_paged_pool_bytes != null) body += dataRow('Non-paged Pool', fmtBytes(d.non_paged_pool_bytes));
             if (d.compressed_bytes != null && d.compressed_bytes > 0) body += dataRow('Compressed', fmtBytes(d.compressed_bytes));
+            // Swap
+            if (d.swap_total_bytes != null && d.swap_total_bytes > 0) {{
+                body += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);">';
+                if (d.swap_usage_percent != null) body += pctBar(d.swap_usage_percent, 'Swap Usage');
+                body += dataRow('Swap Used', fmtBytes(d.swap_used_bytes) + ' / ' + fmtBytes(d.swap_total_bytes));
+                if (d.swap_free_bytes != null) body += dataRow('Swap Free', fmtBytes(d.swap_free_bytes));
+                body += '</div>';
+            }}
+            // Sticks
+            var sticks = d.sticks || [];
+            if (sticks.length > 0) {{
+                body += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);">';
+                body += dataRow('Memory Sticks', sticks.length);
+                sticks.forEach(function(st, i) {{
+                    var label = st.device_locator || st.bank_label || ('Stick ' + (i+1));
+                    var cap = st.capacity_bytes ? fmtBytes(st.capacity_bytes) : '?';
+                    var speed = st.speed_mhz ? st.speed_mhz + ' MHz' : '';
+                    var mfg = st.manufacturer || '';
+                    var part = st.part_number || '';
+                    body += dataRow(label, cap + (speed ? ' @ ' + speed : '') + (mfg ? ' (' + mfg + ')' : ''));
+                    if (part) body += dataRow('', '<span style="font-size:11px;color:var(--text-dim);">' + part + '</span>');
+                }});
+                body += '</div>';
+            }}
+            // Top memory processes
+            var topProc = d.top_processes || [];
+            if (topProc.length > 0) {{
+                body += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);">';
+                body += '<div class="data-row"><span class="data-row-label" style="font-weight:600;">Top Memory Processes</span></div>';
+                topProc.slice(0, 5).forEach(function(p) {{
+                    body += dataRow(p.name || '?', fmtBytes(p.memory_bytes));
+                }});
+                body += '</div>';
+            }}
             return panelCard('ram', 'Memory', d.memory_type ? d.total_bytes ? fmtBytes(d.total_bytes) + ' ' + d.memory_type : d.memory_type : null, body);
         }}
 
@@ -3330,6 +3519,19 @@ fn build_sentinel_custom_tabs_shell_html(
         function buildNetworkPanel(d) {{
             if (!d || d === null) return '';
             var body = '';
+            // Top-level aggregates
+            if (d.interface_count != null) body += dataRow('Interfaces', d.interface_count);
+            if (d.received_bytes_per_second != null || d.transmitted_bytes_per_second != null) {{
+                body += dataRow('Total Down', fmtBytes(Math.round(d.received_bytes_per_second || 0)) + '/s');
+                body += dataRow('Total Up', fmtBytes(Math.round(d.transmitted_bytes_per_second || 0)) + '/s');
+            }}
+            if (d.total_received_bytes != null) body += dataRow('Total Received', fmtBytes(d.total_received_bytes));
+            if (d.total_transmitted_bytes != null) body += dataRow('Total Sent', fmtBytes(d.total_transmitted_bytes));
+            if (d.total_packets_received != null) body += dataRow('Packets In', d.total_packets_received);
+            if (d.total_packets_transmitted != null) body += dataRow('Packets Out', d.total_packets_transmitted);
+            if (d.total_errors_received != null && d.total_errors_received > 0) body += dataRow('Errors In', d.total_errors_received);
+            if (d.total_errors_transmitted != null && d.total_errors_transmitted > 0) body += dataRow('Errors Out', d.total_errors_transmitted);
+            // Per-interface
             var ifaces = d.interfaces || [];
             if (Array.isArray(ifaces) && ifaces.length > 0) {{
                 ifaces.slice(0, 6).forEach(function(iface, idx) {{
@@ -3338,11 +3540,12 @@ fn build_sentinel_custom_tabs_shell_html(
                     var hasTraffic = (iface.received_bytes_per_second > 0 || iface.transmitted_bytes_per_second > 0 || iface.total_received_bytes > 0);
                     var statusTag = iface.adapter_status === 'Up' ? 'online' : (hasTraffic ? 'online' : 'offline');
                     var statusText = iface.adapter_status || (hasTraffic ? 'Active' : 'Idle');
-                    body += '<div style="' + (idx > 0 ? 'margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);' : '') + '">';
+                    body += '<div style="' + (idx > 0 || d.interface_count != null ? 'margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);' : '') + '">';
                     body += dataRow(name, '<span class="data-tag ' + statusTag + '">' + statusText + '</span>');
                     if (desc) body += dataRow('Adapter', desc);
                     if (iface.link_speed) body += dataRow('Link Speed', iface.link_speed);
                     if (iface.media_type) body += dataRow('Type', iface.media_type);
+                    if (iface.media_connection_state) body += dataRow('Media State', iface.media_connection_state);
                     var ipv4 = null; var ipv6 = null;
                     if (iface.ip_addresses && Array.isArray(iface.ip_addresses)) {{
                         for (var i = 0; i < iface.ip_addresses.length; i++) {{
@@ -3353,9 +3556,19 @@ fn build_sentinel_custom_tabs_shell_html(
                     }}
                     if (ipv4) body += dataRow('IPv4', ipv4);
                     if (ipv6) body += dataRow('IPv6', '<span style="font-size:11px">' + ipv6 + '</span>');
+                    if (iface.mac_address) body += dataRow('MAC', '<span style="font-size:11px">' + iface.mac_address + '</span>');
                     if (iface.received_bytes_per_second != null) body += dataRow('Down', fmtBytes(Math.round(iface.received_bytes_per_second)) + '/s');
                     if (iface.transmitted_bytes_per_second != null) body += dataRow('Up', fmtBytes(Math.round(iface.transmitted_bytes_per_second)) + '/s');
+                    if (iface.total_received_bytes != null) body += dataRow('Total Rx', fmtBytes(iface.total_received_bytes));
+                    if (iface.total_transmitted_bytes != null) body += dataRow('Total Tx', fmtBytes(iface.total_transmitted_bytes));
+                    var pkt = iface.packets || {{}};
+                    if (pkt.total_received != null) body += dataRow('Packets Rx', pkt.total_received);
+                    if (pkt.total_transmitted != null) body += dataRow('Packets Tx', pkt.total_transmitted);
+                    var err = iface.errors || {{}};
+                    if (err.total_received > 0) body += dataRow('Errors Rx', err.total_received);
+                    if (err.total_transmitted > 0) body += dataRow('Errors Tx', err.total_transmitted);
                     if (iface.driver_version) body += dataRow('Driver', iface.driver_version);
+                    if (iface.driver_provider) body += dataRow('Provider', iface.driver_provider);
                     body += '</div>';
                 }});
             }} else {{
@@ -3369,17 +3582,134 @@ fn build_sentinel_custom_tabs_shell_html(
             var body = '';
             var od = d.output_device || {{}};
             var id = d.input_device || {{}};
+            // Output device
             if (od.volume_percent != null) {{
-                body += pctBar(od.volume_percent, 'Volume');
+                body += pctBar(od.volume_percent, 'Output Volume');
             }}
-            body += dataRow('Muted', od.muted != null ? (od.muted ? 'Yes' : 'No') : '\u2014');
-            if (od.name) body += dataRow('Output', od.name);
-            if (id.name) body += dataRow('Input', id.name);
-            var ms = d.media_session;
-            if (ms && ms.playing) {{
-                body += dataRow('Playing', (ms.title || '?') + (ms.artist ? ' \u2014 ' + ms.artist : ''));
+            body += dataRow('Output Muted', od.muted != null ? (od.muted ? '<span class="data-tag offline">Yes</span>' : '<span class="data-tag online">No</span>') : '\u2014');
+            if (od.name) body += dataRow('Output Device', od.name);
+            if (od.audio_level != null) body += dataRow('Audio Level', (od.audio_level * 100).toFixed(1) + '%');
+            var lvl = od.levels || {{}};
+            if (lvl.peak != null) body += dataRow('Peak', (lvl.peak * 100).toFixed(1) + '% (' + (lvl.peak_db != null ? lvl.peak_db.toFixed(1) : '?') + ' dB)');
+            if (lvl.rms != null) body += dataRow('RMS', (lvl.rms * 100).toFixed(1) + '% (' + (lvl.rms_db != null ? lvl.rms_db.toFixed(1) : '?') + ' dB)');
+            if (lvl.smoothed_peak != null) body += dataRow('Smoothed Peak', (lvl.smoothed_peak * 100).toFixed(1) + '% (' + (lvl.smoothed_peak_db != null ? lvl.smoothed_peak_db.toFixed(1) : '?') + ' dB)');
+            if (lvl.smoothed_rms != null) body += dataRow('Smoothed RMS', (lvl.smoothed_rms * 100).toFixed(1) + '% (' + (lvl.smoothed_rms_db != null ? lvl.smoothed_rms_db.toFixed(1) : '?') + ' dB)');
+            var hist = od.history || {{}};
+            if (hist.sample_count != null) body += dataRow('Peak Samples', hist.sample_count);
+            if (hist.peak_32 && hist.peak_32.length > 0) {{
+                var maxPk = Math.max.apply(null, hist.peak_32);
+                body += dataRow('Peak History Max', (maxPk * 100).toFixed(1) + '%');
+            }}
+            // Input device
+            body += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);">';
+            if (id.volume_percent != null) {{
+                body += pctBar(id.volume_percent, 'Input Volume');
+            }}
+            body += dataRow('Input Muted', id.muted != null ? (id.muted ? '<span class="data-tag offline">Yes</span>' : '<span class="data-tag online">No</span>') : '\u2014');
+            if (id.name) body += dataRow('Input Device', id.name);
+            body += '</div>';
+            // Spectrum
+            var spec = d.spectrum_32;
+            if (spec && Array.isArray(spec) && spec.length > 0) {{
+                body += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);">';
+                body += dataRow('Spectrum Bins', spec.length);
+                var specMax = Math.max.apply(null, spec);
+                body += dataRow('Spectrum Peak', specMax.toFixed(3));
+                body += '<div style="display:flex;align-items:flex-end;height:40px;gap:1px;margin-top:4px;">';
+                spec.forEach(function(v) {{
+                    var h = Math.max(1, Math.round(v * 40));
+                    body += '<div style="flex:1;height:' + h + 'px;background:var(--accent-color,#4fc3f7);border-radius:1px;"></div>';
+                }});
+                body += '</div>';
+                body += '</div>';
             }}
             return panelCard('audio', 'Audio', null, body);
+        }}
+
+        function buildMediaPanel(d) {{
+            if (!d || d === null) return '';
+            var isPlaying = d.playing === true;
+            var status = d.playback_status || (isPlaying ? 'playing' : 'stopped');
+            var statusClass = isPlaying ? 'playing' : (status === 'paused' ? 'paused' : 'stopped');
+            var statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+            var hasTrack = !!(d.title || d.artist);
+
+            // Idle state — no media playing
+            if (!hasTrack && !isPlaying) {{
+                var idleBody = '<div class="media-idle">' +
+                    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none" opacity="0.3"/></svg>' +
+                    '<div class="media-idle-text">No active media session</div>' +
+                '</div>';
+                return panelCard('media', 'Media', null, idleBody);
+            }}
+
+            var body = '<div class="media-player">';
+
+            // Hero section: art + info
+            body += '<div class="media-hero">';
+            // Album art
+            body += '<div class="media-art">';
+            if (d.thumbnail) {{
+                body += '<img src="' + d.thumbnail + '" alt="Album Art" />';
+            }} else {{
+                body += '<div class="media-art-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>';
+            }}
+            body += '</div>';
+            // Track info
+            body += '<div class="media-info">';
+            body += '<div class="media-status-badge"><span class="media-status-dot ' + statusClass + '"></span>' + statusLabel + '</div>';
+            if (d.title) body += '<div class="media-title" title="' + (d.title || '').replace(/"/g, '&quot;') + '">' + d.title + '</div>';
+            if (d.artist) body += '<div class="media-artist">' + d.artist + '</div>';
+            if (d.album) body += '<div class="media-album">' + d.album + (d.album_artist && d.album_artist !== d.artist ? ' \u2022 ' + d.album_artist : '') + '</div>';
+            body += '</div>';
+            body += '</div>';
+
+            // Progress bar
+            var tl = d.timeline || {{}};
+            if (tl.duration_ms != null && tl.duration_ms > 0) {{
+                var pos = tl.position_ms || 0;
+                var dur = tl.duration_ms;
+                var pct = Math.min((pos / dur * 100), 100).toFixed(2);
+                function fmtTime(ms) {{
+                    var totalSec = Math.floor(ms / 1000);
+                    var m = Math.floor(totalSec / 60);
+                    var s = totalSec % 60;
+                    return m + ':' + (s < 10 ? '0' : '') + s;
+                }}
+                body += '<div class="media-progress">';
+                body += '<div class="media-progress-bar"><div class="media-progress-fill" style="width:' + pct + '%"></div></div>';
+                body += '<div class="media-time"><span>' + fmtTime(pos) + '</span><span>' + fmtTime(dur) + '</span></div>';
+                body += '</div>';
+            }}
+
+            // Meta chips
+            var chips = [];
+            if (d.source_app_id) {{
+                var src = d.source_app_id;
+                // Simplify app model IDs to readable names
+                var lastDot = src.lastIndexOf('.');
+                var lastBang = src.lastIndexOf('!');
+                if (lastBang > 0) src = src.substring(0, lastBang);
+                if (lastDot > 0 && lastDot > src.length - 20) src = src.substring(lastDot + 1);
+                chips.push('<span class="media-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>' + src + '</span>');
+            }}
+            if (d.playback_type && d.playback_type !== 'unknown') chips.push('<span class="media-chip">' + d.playback_type + '</span>');
+            if (d.shuffle != null) chips.push('<span class="media-chip' + (d.shuffle ? ' active' : '') + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>' + (d.shuffle ? 'Shuffle' : 'Ordered') + '</span>');
+            if (d.repeat_mode && d.repeat_mode !== 'none') chips.push('<span class="media-chip active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>Repeat ' + d.repeat_mode + '</span>');
+            if (d.playback_rate != null && d.playback_rate !== 1.0) chips.push('<span class="media-chip">' + d.playback_rate + 'x</span>');
+            if (d.genres && d.genres.length > 0) chips.push('<span class="media-chip">' + d.genres.slice(0, 3).join(', ') + '</span>');
+            if (d.track_number != null) {{
+                var trackStr = '#' + d.track_number;
+                if (d.album_track_count) trackStr += '/' + d.album_track_count;
+                chips.push('<span class="media-chip">' + trackStr + '</span>');
+            }}
+
+            if (chips.length > 0) {{
+                body += '<div class="media-meta">' + chips.join('') + '</div>';
+            }}
+
+            body += '</div>';
+            return panelCard('media', 'Media', d.title || null, body);
         }}
 
         function buildTimePanel(d) {{
@@ -3390,12 +3720,24 @@ fn build_sentinel_custom_tabs_shell_html(
                 body += '<div class="data-big-value">' + t.substring(11,19) + '</div>';
                 body += dataRow('Date', t.substring(0,10));
             }}
+            if (d.weekday) body += dataRow('Day', d.weekday);
+            if (d.human_date) body += dataRow('Formatted', d.human_date);
+            if (d.human_time) body += dataRow('Time (12h)', d.human_time + (d.am_pm ? ' ' + d.am_pm : ''));
             if (d.timezone) body += dataRow('Timezone', d.timezone);
+            if (d.utc_offset_hours != null) body += dataRow('UTC Offset', (d.utc_offset_hours >= 0 ? '+' : '') + d.utc_offset_hours.toFixed(1) + 'h');
+            if (d.utc_iso) body += dataRow('UTC', d.utc_iso);
+            if (d.unix != null) body += dataRow('Unix', d.unix);
+            if (d.unix_ms != null) body += dataRow('Unix (ms)', d.unix_ms);
+            if (d.day_of_year != null) body += dataRow('Day of Year', d.day_of_year);
+            if (d.iso_week != null) body += dataRow('ISO Week', d.iso_week);
+            if (d.quarter != null) body += dataRow('Quarter', 'Q' + d.quarter);
+            if (d.is_leap_year != null) body += dataRow('Leap Year', d.is_leap_year ? 'Yes' : 'No');
             if (d.uptime_seconds != null) {{
                 var s = d.uptime_seconds;
-                var h = Math.floor(s/3600); var m = Math.floor((s%3600)/60);
-                body += dataRow('Uptime', h + 'h ' + m + 'm');
+                var dd = Math.floor(s/86400); var h = Math.floor((s%86400)/3600); var m = Math.floor((s%3600)/60);
+                body += dataRow('Uptime', (dd > 0 ? dd + 'd ' : '') + h + 'h ' + m + 'm');
             }}
+            if (d.boot_time_unix != null) body += dataRow('Boot Time', new Date(d.boot_time_unix * 1000).toLocaleString());
             return panelCard('time', 'Time', null, body);
         }}
 
@@ -3406,8 +3748,17 @@ fn build_sentinel_custom_tabs_shell_html(
             body += dataRow('Caps Lock', ts.caps_lock ? '<span class="data-tag online">ON</span>' : '<span class="data-tag offline">OFF</span>');
             body += dataRow('Num Lock', ts.num_lock ? '<span class="data-tag online">ON</span>' : '<span class="data-tag offline">OFF</span>');
             body += dataRow('Scroll Lock', ts.scroll_lock ? '<span class="data-tag online">ON</span>' : '<span class="data-tag offline">OFF</span>');
+            if (ts.insert != null) body += dataRow('Insert', ts.insert ? '<span class="data-tag online">ON</span>' : '<span class="data-tag offline">OFF</span>');
             if (d.layout_id) body += dataRow('Layout', d.layout_id);
             if (d.type_name) body += dataRow('Type', d.type_name);
+            if (d.type_id != null) body += dataRow('Type ID', d.type_id);
+            if (d.subtype != null) body += dataRow('Subtype', d.subtype);
+            if (d.function_key_count != null) body += dataRow('Function Keys', d.function_key_count);
+            if (d.pressed_count != null) body += dataRow('Keys Pressed', d.pressed_count);
+            if (d.pressed_keys && d.pressed_keys.length > 0) body += dataRow('Active Keys', d.pressed_keys.join(', '));
+            var ev = d.events || {{}};
+            if (ev.down && ev.down.length > 0) body += dataRow('Key Down', ev.down.join(', '));
+            if (ev.up && ev.up.length > 0) body += dataRow('Key Up', ev.up.join(', '));
             return panelCard('keyboard', 'Keyboard', null, body);
         }}
 
@@ -3416,11 +3767,24 @@ fn build_sentinel_custom_tabs_shell_html(
             var body = '';
             var c = d.cursor || {{}};
             var b = d.buttons || {{}};
+            var scr = d.screen || {{}};
+            if (d.present != null) body += dataRow('Present', d.present ? '<span class="data-tag online">Yes</span>' : '<span class="data-tag offline">No</span>');
             if (c.x != null && c.y != null) body += dataRow('Position', c.x + ', ' + c.y);
             if (b.count != null) body += dataRow('Buttons', b.count);
             if (b.swapped != null) body += dataRow('Swap Buttons', b.swapped ? 'Yes' : 'No');
+            if (b.left_down != null) body += dataRow('Left Btn', b.left_down ? '<span class="data-tag online">Down</span>' : 'Up');
+            if (b.right_down != null) body += dataRow('Right Btn', b.right_down ? '<span class="data-tag online">Down</span>' : 'Up');
+            if (b.middle_down != null) body += dataRow('Middle Btn', b.middle_down ? '<span class="data-tag online">Down</span>' : 'Up');
+            if (b.left_clicks != null) body += dataRow('Left Clicks', b.left_clicks);
+            if (b.right_clicks != null) body += dataRow('Right Clicks', b.right_clicks);
+            if (b.middle_clicks != null) body += dataRow('Middle Clicks', b.middle_clicks);
+            var ev = d.events || {{}};
+            if (ev.clicked && ev.clicked.length > 0) body += dataRow('Clicked', ev.clicked.join(', '));
             if (d.speed != null) body += dataRow('Speed', d.speed);
             if (d.wheel_present != null) body += dataRow('Wheel', d.wheel_present ? 'Present' : 'None');
+            if (scr.primary_width != null && scr.primary_height != null) body += dataRow('Primary Screen', scr.primary_width + '\u00d7' + scr.primary_height);
+            if (scr.virtual_width != null && scr.virtual_height != null) body += dataRow('Virtual Screen', scr.virtual_width + '\u00d7' + scr.virtual_height);
+            if (scr.monitor_count != null) body += dataRow('Monitors', scr.monitor_count);
             return panelCard('mouse', 'Mouse', null, body);
         }}
 
@@ -3435,8 +3799,30 @@ fn build_sentinel_custom_tabs_shell_html(
             var status = acOn ? 'AC Power' : (bat.charging ? 'Charging' : 'Battery');
             var tagClass = acOn || bat.charging ? 'charging' : (bat.percent != null && bat.percent < 20 ? 'offline' : 'online');
             body += dataRow('Status', '<span class="data-tag ' + tagClass + '">' + status + '</span>');
+            if (bat.present != null) body += dataRow('Battery Present', bat.present ? '<span class="data-tag online">Yes</span>' : '<span class="data-tag offline">No</span>');
+            if (bat.critical) body += dataRow('Critical', '<span class="data-tag offline">Yes</span>');
+            if (bat.low) body += dataRow('Low', '<span class="data-tag offline">Yes</span>');
+            if (bat.high) body += dataRow('High', '<span class="data-tag online">Yes</span>');
+            if (bat.lifetime_seconds != null) {{
+                var ls = bat.lifetime_seconds; var lh = Math.floor(ls/3600); var lm = Math.floor((ls%3600)/60);
+                body += dataRow('Remaining', lh + 'h ' + lm + 'm');
+            }}
+            if (bat.fulllife_seconds != null) {{
+                var fs = bat.fulllife_seconds; var fh = Math.floor(fs/3600); var fm = Math.floor((fs%3600)/60);
+                body += dataRow('Full Life', fh + 'h ' + fm + 'm');
+            }}
             if (bat.saver_active != null) body += dataRow('Battery Saver', bat.saver_active ? 'Active' : 'Off');
             if (d.power_plan) body += dataRow('Power Plan', d.power_plan);
+            var det = bat.details || {{}};
+            if (det.name) body += dataRow('Battery Name', det.name);
+            if (det.chemistry) body += dataRow('Chemistry', det.chemistry);
+            if (det.design_capacity_mwh != null) body += dataRow('Design Capacity', (det.design_capacity_mwh / 1000).toFixed(1) + ' Wh');
+            if (det.full_charge_capacity_mwh != null) body += dataRow('Full Charge', (det.full_charge_capacity_mwh / 1000).toFixed(1) + ' Wh');
+            if (det.health_percent != null) body += dataRow('Health', det.health_percent.toFixed(1) + '%');
+            if (det.design_voltage_mv != null) body += dataRow('Design Voltage', (det.design_voltage_mv / 1000).toFixed(2) + ' V');
+            if (det.status) body += dataRow('Battery Status', det.status);
+            if (det.estimated_charge_percent != null) body += dataRow('Est. Charge', det.estimated_charge_percent + '%');
+            if (det.estimated_runtime_minutes != null) body += dataRow('Est. Runtime', det.estimated_runtime_minutes + ' min');
             return panelCard('power', 'Power', null, body);
         }}
 
@@ -3446,11 +3832,29 @@ fn build_sentinel_custom_tabs_shell_html(
             var c = d.connected || {{}};
             if (c.ssid) body += dataRow('SSID', c.ssid);
             if (c.signal_percent != null) body += pctBar(c.signal_percent, 'Signal');
+            if (c.signal_quality) body += dataRow('Signal Quality', c.signal_quality);
             if (c.bssid) body += dataRow('BSSID', c.bssid);
             if (c.channel) body += dataRow('Channel', c.channel);
             if (c.band) body += dataRow('Band', c.band);
             if (c.radio_type) body += dataRow('Protocol', c.radio_type);
+            if (c.authentication) body += dataRow('Authentication', c.authentication);
+            if (c.cipher) body += dataRow('Cipher', c.cipher);
+            if (c.receive_rate_mbps != null) body += dataRow('Receive Rate', c.receive_rate_mbps.toFixed(1) + ' Mbps');
+            if (c.transmit_rate_mbps != null) body += dataRow('Transmit Rate', c.transmit_rate_mbps.toFixed(1) + ' Mbps');
+            if (c.profile) body += dataRow('Profile', c.profile);
+            if (c.interface_name) body += dataRow('Interface', c.interface_name);
+            if (c.interface_type) body += dataRow('Interface Type', c.interface_type);
+            if (c.state) body += dataRow('State', c.state);
             body += dataRow('Connected', c.is_connected ? '<span class="data-tag online">Yes</span>' : '<span class="data-tag offline">No</span>');
+            var ifaces = d.interfaces || [];
+            if (ifaces.length > 0) {{
+                body += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);">';
+                body += dataRow('WiFi Interfaces', ifaces.length);
+                ifaces.forEach(function(iface) {{
+                    body += dataRow(iface.name || '?', (iface.status || '') + (iface.link_speed ? ' (' + iface.link_speed + ')' : ''));
+                }});
+                body += '</div>';
+            }}
             return panelCard('wifi', 'WiFi', c.ssid || null, body);
         }}
 
@@ -3461,14 +3865,19 @@ fn build_sentinel_custom_tabs_shell_html(
             body += dataRow('Available', ad.present ? '<span class="data-tag online">Yes</span>' : '<span class="data-tag offline">No</span>');
             if (ad.status) body += dataRow('Status', ad.status);
             if (ad.name) body += dataRow('Adapter', ad.name);
+            if (ad.instance_id) body += dataRow('Instance ID', '<span style="font-size:11px;">' + ad.instance_id + '</span>');
             var devices = d.devices || [];
             if (devices.length > 0) {{
                 body += dataRow('Devices', devices.length);
-                devices.slice(0, 5).forEach(function(dev) {{
+                devices.slice(0, 8).forEach(function(dev) {{
                     var devName = typeof dev === 'string' ? dev : (dev.name || dev.address || '?');
                     var conn = dev.connected ? ' <span class="data-tag online">Connected</span>' : '';
-                    body += dataRow('', devName + conn);
+                    var devType = dev.type ? ' <span style="font-size:11px;color:var(--text-dim);">' + dev.type + '</span>' : '';
+                    var devClass = dev.class ? ' <span style="font-size:11px;color:var(--text-dim);">(' + dev.class + ')</span>' : '';
+                    body += dataRow('', devName + conn + devType + devClass);
+                    if (dev.address) body += dataRow('', '<span style="font-size:11px;color:var(--text-dim);">' + dev.address + '</span>');
                 }});
+                if (devices.length > 8) body += dataRow('More', '+' + (devices.length - 8));
             }}
             return panelCard('bluetooth', 'Bluetooth', null, body);
         }}
@@ -3479,10 +3888,40 @@ fn build_sentinel_custom_tabs_shell_html(
             var os = d.os || {{}};
             if (os.long_name || os.name) body += dataRow('OS', os.long_name || os.name);
             if (os.version) body += dataRow('Version', os.version);
+            if (os.kernel_version) body += dataRow('Kernel', os.kernel_version);
             if (d.hostname || d.computer_name) body += dataRow('Hostname', d.hostname || d.computer_name);
             if (d.username) body += dataRow('User', d.username);
+            if (d.user_domain) body += dataRow('Domain', d.user_domain);
             if (os.cpu_arch || os.arch) body += dataRow('Arch', os.cpu_arch || os.arch);
+            if (d.uptime_seconds != null) {{
+                var s = d.uptime_seconds; var dd = Math.floor(s/86400); var hh = Math.floor((s%86400)/3600); var mm = Math.floor((s%3600)/60);
+                body += dataRow('Uptime', (dd > 0 ? dd + 'd ' : '') + hh + 'h ' + mm + 'm');
+            }}
+            // Locale
+            var loc = d.locale || {{}};
+            var lang = loc.language || {{}};
+            var tz = loc.timezone || {{}};
+            var reg = loc.region || {{}};
+            if (lang.display_name || lang.name) body += dataRow('Language', lang.display_name || lang.name);
+            if (lang.iso_two_letter) body += dataRow('Lang Code', lang.iso_two_letter);
+            if (tz.display_name || tz.id) body += dataRow('Timezone', tz.display_name || tz.id);
+            if (tz.utc_offset_hours != null) body += dataRow('UTC Offset', (tz.utc_offset_hours >= 0 ? '+' : '') + tz.utc_offset_hours.toFixed(1) + 'h');
+            if (tz.daylight_saving != null) body += dataRow('DST', tz.daylight_saving ? 'Active' : 'Inactive');
+            if (reg.country) body += dataRow('Country', reg.country + (reg.country_code ? ' (' + reg.country_code + ')' : ''));
+            if (reg.currency_name) body += dataRow('Currency', reg.currency_name + (reg.currency_symbol ? ' (' + reg.currency_symbol + ')' : ''));
+            // Theme
+            var theme = d.theme || {{}};
+            if (theme.app_theme) body += dataRow('App Theme', theme.app_theme);
+            if (theme.system_theme) body += dataRow('System Theme', theme.system_theme);
+            if (theme.accent_color_hex) body += dataRow('Accent Color', '<span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + theme.accent_color_hex + ';vertical-align:middle;margin-right:4px;"></span>' + theme.accent_color_hex);
+            if (theme.transparency_enabled != null) body += dataRow('Transparency', theme.transparency_enabled ? 'Enabled' : 'Disabled');
+            // Motherboard & BIOS
             if (d.motherboard && d.motherboard.manufacturer && d.motherboard.product) body += dataRow('Board', d.motherboard.manufacturer + ' ' + d.motherboard.product);
+            if (d.motherboard && d.motherboard.serial_number) body += dataRow('Board S/N', d.motherboard.serial_number);
+            var bios = d.bios || {{}};
+            if (bios.name || bios.manufacturer) body += dataRow('BIOS', (bios.manufacturer || '') + (bios.name ? ' ' + bios.name : ''));
+            if (bios.version) body += dataRow('BIOS Version', bios.version);
+            if (bios.release_date) body += dataRow('BIOS Date', bios.release_date);
             return panelCard('system', 'System', d.hostname || d.computer_name || null, body);
         }}
 
@@ -3526,25 +3965,58 @@ fn build_sentinel_custom_tabs_shell_html(
                 var s = sec % 60;
                 body += '<div class="data-big-value">' + m + '<span class="data-big-unit">m</span> ' + s + '<span class="data-big-unit">s</span></div>';
             }}
+            if (d.idle_state) body += dataRow('State', d.idle_state);
+            if (d.is_idle != null) body += dataRow('Idle', d.is_idle ? '<span class="data-tag offline">Yes</span>' : '<span class="data-tag online">No</span>');
             if (d.screensaver_active != null) body += dataRow('Screensaver', d.screensaver_active ? 'Active' : 'Inactive');
             if (d.screen_locked != null) body += dataRow('Screen Locked', d.screen_locked ? 'Yes' : 'No');
-            if (d.idle_state) body += dataRow('State', d.idle_state);
+            if (d.idle_minutes != null) body += dataRow('Idle Minutes', d.idle_minutes);
+            if (d.idle_time_ms != null) body += dataRow('Idle (ms)', d.idle_time_ms);
             return panelCard('idle', 'Idle', null, body);
         }}
 
         function buildProcessesPanel(d) {{
             if (!d || d === null) return '';
             var body = '';
-            var procs = d.top_cpu || d.top_memory || [];
             if (d.total_count != null) body += dataRow('Total', d.total_count);
-            if (procs.length > 0) {{
-                procs.slice(0, 8).forEach(function(p) {{
+            if (d.total_cpu_usage != null) body += dataRow('Total CPU', d.total_cpu_usage.toFixed(1) + '%');
+            if (d.total_memory_bytes != null) body += dataRow('Total Memory', fmtBytes(d.total_memory_bytes));
+            var sc = d.status_counts || {{}};
+            if (sc.running != null || sc.sleeping != null) {{
+                var counts = [];
+                if (sc.running) counts.push(sc.running + ' running');
+                if (sc.sleeping) counts.push(sc.sleeping + ' sleeping');
+                if (sc.stopped) counts.push(sc.stopped + ' stopped');
+                if (sc.zombie) counts.push(sc.zombie + ' zombie');
+                if (sc.other) counts.push(sc.other + ' other');
+                body += dataRow('Status', counts.join(', '));
+            }}
+            var topCpu = d.top_cpu || [];
+            if (topCpu.length > 0) {{
+                body += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);">';
+                body += '<div class="data-row"><span class="data-row-label" style="font-weight:600;">Top CPU</span></div>';
+                topCpu.slice(0, 8).forEach(function(p) {{
                     var name = p.name || '?';
+                    var pid = p.pid != null ? '<span style="font-size:11px;color:var(--text-dim);"> [' + p.pid + ']</span>' : '';
                     var cpu = p.cpu_percent != null ? p.cpu_percent.toFixed(1) + '%' : '';
                     var mem = p.memory_bytes ? fmtBytes(p.memory_bytes) : '';
-                    body += dataRow(name, cpu + (cpu && mem ? ' / ' : '') + mem);
+                    body += dataRow(name + pid, cpu + (cpu && mem ? ' / ' : '') + mem);
                 }});
-            }} else {{
+                body += '</div>';
+            }}
+            var topMem = d.top_memory || [];
+            if (topMem.length > 0) {{
+                body += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color,#333);">';
+                body += '<div class="data-row"><span class="data-row-label" style="font-weight:600;">Top Memory</span></div>';
+                topMem.slice(0, 8).forEach(function(p) {{
+                    var name = p.name || '?';
+                    var pid = p.pid != null ? '<span style="font-size:11px;color:var(--text-dim);"> [' + p.pid + ']</span>' : '';
+                    var mem = p.memory_bytes ? fmtBytes(p.memory_bytes) : '';
+                    var virt = p.virtual_memory_bytes ? ' (virt: ' + fmtBytes(p.virtual_memory_bytes) + ')' : '';
+                    body += dataRow(name + pid, mem + virt);
+                }});
+                body += '</div>';
+            }}
+            if (topCpu.length === 0 && topMem.length === 0) {{
                 body += dataRow('Status', 'No process data');
             }}
             return panelCard('processes', 'Processes', d.total_count ? d.total_count + ' running' : null, body);
@@ -3679,6 +4151,21 @@ fn build_sentinel_custom_tabs_shell_html(
 
             function shouldShow(key) {{ return !allowed || allowed.indexOf(key) !== -1; }}
 
+            var PANEL_TITLES = {{
+                time:'Time',cpu:'CPU',gpu:'GPU',ram:'Memory',storage:'Storage',
+                displays:'Displays',network:'Network',wifi:'Wi-Fi',bluetooth:'Bluetooth',
+                audio:'Audio',media:'Media Session',keyboard:'Keyboard',mouse:'Mouse',
+                power:'Power',idle:'Idle',system:'System',processes:'Processes',
+                appdata:'App Data',addons:'Addons',assets:'Assets',registry_meta:'Registry Meta'
+            }};
+
+            function tryPanel(key, result) {{
+                if (!shouldShow(key)) return;
+                if (result) {{ html += result; return; }}
+                html += panelCard(key, PANEL_TITLES[key] || key, null,
+                    '<div class="data-row"><span class="data-row-label" style="opacity:0.4">Awaiting data\u2026</span></div>');
+            }}
+
             window.__panelTrackedByMeta = {{
                 time: !(sectionMeta.time && sectionMeta.time.tracked === false),
                 cpu: !(sectionMeta.cpu && sectionMeta.cpu.tracked === false),
@@ -3690,6 +4177,7 @@ fn build_sentinel_custom_tabs_shell_html(
                 wifi: !(sectionMeta.wifi && sectionMeta.wifi.tracked === false),
                 bluetooth: !(sectionMeta.bluetooth && sectionMeta.bluetooth.tracked === false),
                 audio: !(sectionMeta.audio && sectionMeta.audio.tracked === false),
+                media: !(sectionMeta.media && sectionMeta.media.tracked === false),
                 keyboard: !(sectionMeta.keyboard && sectionMeta.keyboard.tracked === false),
                 mouse: !(sectionMeta.mouse && sectionMeta.mouse.tracked === false),
                 power: !(sectionMeta.power && sectionMeta.power.tracked === false),
@@ -3699,25 +4187,26 @@ fn build_sentinel_custom_tabs_shell_html(
                 appdata: !(sectionMeta.appdata && sectionMeta.appdata.tracked === false),
             }};
 
-            if (shouldShow('time'))       html += buildTimePanel(sys.time);
-            if (shouldShow('cpu'))        html += buildCpuPanel(sys.cpu);
-            if (shouldShow('gpu'))        html += buildGpuPanel(sys.gpu);
-            if (shouldShow('ram'))        html += buildRamPanel(sys.ram);
-            if (shouldShow('storage'))    html += buildStoragePanel(sys.storage);
-            if (shouldShow('displays'))   html += buildDisplaysPanel(sys.displays);
-            if (shouldShow('network'))    html += buildNetworkPanel(sys.network);
-            if (shouldShow('wifi'))       html += buildWifiPanel(sys.wifi);
-            if (shouldShow('bluetooth'))  html += buildBluetoothPanel(sys.bluetooth);
-            if (shouldShow('audio'))      html += buildAudioPanel(sys.audio);
-            if (shouldShow('keyboard'))   html += buildKeyboardPanel(sys.keyboard);
-            if (shouldShow('mouse'))      html += buildMousePanel(sys.mouse);
-            if (shouldShow('power'))      html += buildPowerPanel(sys.power);
-            if (shouldShow('idle'))       html += buildIdlePanel(sys.idle);
-            if (shouldShow('system'))     html += buildSystemPanel(sys.system);
-            if (shouldShow('processes'))  html += buildProcessesPanel(sys.processes);
-            if (shouldShow('appdata'))    html += buildAppdataPanel(data.appdata);
-            if (shouldShow('addons'))     html += buildAddonsPanel(data.addons);
-            if (shouldShow('assets'))     html += buildAssetsPanel(data.assets);
+            tryPanel('time',       buildTimePanel(sys.time));
+            tryPanel('cpu',        buildCpuPanel(sys.cpu));
+            tryPanel('gpu',        buildGpuPanel(sys.gpu));
+            tryPanel('ram',        buildRamPanel(sys.ram));
+            tryPanel('storage',    buildStoragePanel(sys.storage));
+            tryPanel('displays',   buildDisplaysPanel(sys.displays));
+            tryPanel('network',    buildNetworkPanel(sys.network));
+            tryPanel('wifi',       buildWifiPanel(sys.wifi));
+            tryPanel('bluetooth',  buildBluetoothPanel(sys.bluetooth));
+            tryPanel('audio',      buildAudioPanel(sys.audio));
+            tryPanel('media',      buildMediaPanel(sys.media));
+            tryPanel('keyboard',   buildKeyboardPanel(sys.keyboard));
+            tryPanel('mouse',      buildMousePanel(sys.mouse));
+            tryPanel('power',      buildPowerPanel(sys.power));
+            tryPanel('idle',       buildIdlePanel(sys.idle));
+            tryPanel('system',     buildSystemPanel(sys.system));
+            tryPanel('processes',  buildProcessesPanel(sys.processes));
+            tryPanel('appdata',    buildAppdataPanel(data.appdata));
+            tryPanel('addons',     buildAddonsPanel(data.addons));
+            tryPanel('assets',     buildAssetsPanel(data.assets));
             if (shouldShow('registry_meta')) html += buildRegistryMetaPanel(data.__meta);
             if (!allowed)                 html += buildUnknownSysdataPanels(sys);
 

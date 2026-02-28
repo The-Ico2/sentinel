@@ -1,9 +1,9 @@
 // ~/sentinel/sentinel-backend/src/ipc/sysdata/media.rs
 
 //
-// ─────────────────────────────────────────────────────────────
-// THIS SHIT DOES NOT WORK AND I DONT KNOW HOW TO MAKE IT WORK
-// ─────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
+// Windows Media Session (GSMTC) — background-polled cache
+// ──────────────────────────────────────────────────────────
 //
 
 use serde_json::{json, Value};
@@ -15,6 +15,7 @@ use std::{
 	time::{Duration, Instant},
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+use windows_future::{AsyncStatus, IAsyncOperation};
 use windows::Media::Control::{
 	GlobalSystemMediaTransportControlsSession,
 	GlobalSystemMediaTransportControlsSessionManager,
@@ -22,6 +23,9 @@ use windows::Media::Control::{
 	GlobalSystemMediaTransportControlsSessionPlaybackInfo,
 	GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 	GlobalSystemMediaTransportControlsSessionTimelineProperties,
+};
+use windows::Storage::Streams::{
+	DataReader, InputStreamOptions,
 };
 
 // ── constants ────────────────────────────────────────────────
@@ -87,32 +91,120 @@ fn start_media_poller_once() {
 	});
 }
 
-// ── core query (GetResults polling — the proven approach) ────
+// ── core query (AsyncStatus-based blocking) ─────────────────
+
+/// Block on a WinRT `IAsyncOperation<T>` by polling `Status()`.
+/// Returns `None` if the operation errors, is cancelled, or times out.
+fn wait_async<T: windows::core::RuntimeType>(
+	op: &IAsyncOperation<T>,
+	timeout_ms: u64,
+) -> Option<T> {
+	let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+	loop {
+		match op.Status() {
+			Ok(AsyncStatus::Completed) => return op.GetResults().ok(),
+			Ok(AsyncStatus::Error) | Ok(AsyncStatus::Canceled) | Err(_) => return None,
+			_ => {
+				if Instant::now() >= deadline {
+					return None;
+				}
+				std::thread::sleep(Duration::from_millis(5));
+			}
+		}
+	}
+}
+
+// ── base64 encoder ───────────────────────────────────────────
+
+const B64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode(data: &[u8]) -> String {
+	let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+	for chunk in data.chunks(3) {
+		let b0 = chunk[0] as u32;
+		let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+		let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+		let triple = (b0 << 16) | (b1 << 8) | b2;
+		out.push(B64_CHARS[((triple >> 18) & 0x3F) as usize] as char);
+		out.push(B64_CHARS[((triple >> 12) & 0x3F) as usize] as char);
+		if chunk.len() > 1 {
+			out.push(B64_CHARS[((triple >> 6) & 0x3F) as usize] as char);
+		} else {
+			out.push('=');
+		}
+		if chunk.len() > 2 {
+			out.push(B64_CHARS[(triple & 0x3F) as usize] as char);
+		} else {
+			out.push('=');
+		}
+	}
+	out
+}
+
+// ── thumbnail extraction ─────────────────────────────────────
+
+fn extract_thumbnail_data_url(
+	properties: &GlobalSystemMediaTransportControlsSessionMediaProperties,
+) -> Option<String> {
+	let thumb_ref = properties.Thumbnail().ok()?;
+	let stream_op = thumb_ref.OpenReadAsync().ok()?;
+	let stream = wait_async(&stream_op, 2000)?;
+	let size = stream.Size().ok()? as u32;
+	if size == 0 || size > 5_000_000 {
+		return None; // skip empty or absurdly large
+	}
+	let reader_op = DataReader::CreateDataReader(&stream).ok()?;
+	let reader = reader_op;
+	reader.SetInputStreamOptions(InputStreamOptions::ReadAhead).ok()?;
+	let load_op = reader.LoadAsync(size).ok()?;
+
+	// Poll LoadAsync
+	let deadline = Instant::now() + Duration::from_millis(2000);
+	loop {
+		match load_op.Status() {
+			Ok(AsyncStatus::Completed) => { let _ = load_op.GetResults(); break; }
+			Ok(AsyncStatus::Error) | Ok(AsyncStatus::Canceled) | Err(_) => return None,
+			_ => {
+				if Instant::now() >= deadline { return None; }
+				std::thread::sleep(Duration::from_millis(5));
+			}
+		}
+	}
+
+	let mut buf = vec![0u8; size as usize];
+	reader.ReadBytes(&mut buf).ok()?;
+	let _ = reader.Close();
+
+	// Detect MIME from magic bytes
+	let mime = if buf.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+		"image/png"
+	} else if buf.starts_with(&[0xFF, 0xD8, 0xFF]) {
+		"image/jpeg"
+	} else if buf.starts_with(b"RIFF") && buf.len() > 12 && &buf[8..12] == b"WEBP" {
+		"image/webp"
+	} else if buf.starts_with(b"GIF") {
+		"image/gif"
+	} else {
+		"image/png" // fallback
+	};
+
+	Some(format!("data:{};base64,{}", mime, base64_encode(&buf)))
+}
 
 fn query_media_session() -> Value {
 	unsafe {
 		let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 	}
 
-	// Block on RequestAsync via GetResults() polling
-	let manager: GlobalSystemMediaTransportControlsSessionManager = match
-		GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-	{
-		Ok(op) => {
-			let mut result = None;
-			for _ in 0..100 {
-				match op.GetResults() {
-					Ok(m) => { result = Some(m); break; }
-					Err(_) => std::thread::sleep(Duration::from_millis(10)),
-				}
-			}
-			match result {
+	// Get the session manager via RequestAsync, blocking with Status() poll
+	let manager: GlobalSystemMediaTransportControlsSessionManager =
+		match GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
+			Ok(op) => match wait_async(&op, 3000) {
 				Some(m) => m,
 				None => return Value::Null,
-			}
-		}
-		Err(_) => return Value::Null,
-	};
+			},
+			Err(_) => return Value::Null,
+		};
 
 	let current_session = manager.GetCurrentSession().ok();
 	let sessions = manager.GetSessions().ok();
@@ -230,17 +322,9 @@ fn query_media_session() -> Value {
 	let timeline: Option<GlobalSystemMediaTransportControlsSessionTimelineProperties> =
 		session.GetTimelineProperties().ok();
 
-	// Block on TryGetMediaPropertiesAsync via GetResults() polling
+	// Block on TryGetMediaPropertiesAsync via Status() poll
 	let properties: Option<GlobalSystemMediaTransportControlsSessionMediaProperties> =
-		session.TryGetMediaPropertiesAsync().ok().and_then(|op| {
-			for _ in 0..100 {
-				match op.GetResults() {
-					Ok(r) => return Some(r),
-					Err(_) => std::thread::sleep(Duration::from_millis(10)),
-				}
-			}
-			None
-		});
+		session.TryGetMediaPropertiesAsync().ok().and_then(|op| wait_async(&op, 3000));
 
 	let status = playback_info
 		.as_ref()
@@ -268,22 +352,28 @@ fn query_media_session() -> Value {
 		.map(|s| s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
 		.unwrap_or(false);
 
+	let non_empty = |s: String| if s.is_empty() { None } else { Some(s) };
+
 	let title = properties
 		.as_ref()
 		.and_then(|p| p.Title().ok())
-		.map(|s| s.to_string());
+		.map(|s| s.to_string())
+		.and_then(non_empty);
 	let artist = properties
 		.as_ref()
 		.and_then(|p| p.Artist().ok())
-		.map(|s| s.to_string());
+		.map(|s| s.to_string())
+		.and_then(non_empty);
 	let album = properties
 		.as_ref()
 		.and_then(|p| p.AlbumTitle().ok())
-		.map(|s| s.to_string());
+		.map(|s| s.to_string())
+		.and_then(non_empty);
 	let album_artist = properties
 		.as_ref()
 		.and_then(|p| p.AlbumArtist().ok())
-		.map(|s| s.to_string());
+		.map(|s| s.to_string())
+		.and_then(non_empty);
 	let track_number = properties
 		.as_ref()
 		.and_then(|p| p.TrackNumber().ok());
@@ -314,6 +404,10 @@ fn query_media_session() -> Value {
 			3 => "image",
 			_ => "other",
 		});
+
+	let thumbnail_data_url: Option<String> = properties
+		.as_ref()
+		.and_then(|p| extract_thumbnail_data_url(p));
 
 	let source_app_id = session
 		.SourceAppUserModelId()
@@ -432,6 +526,7 @@ fn query_media_session() -> Value {
 		"playback_rate": playback_rate,
 		"shuffle": is_shuffle,
 		"repeat_mode": auto_repeat,
+		"thumbnail": thumbnail_data_url,
 		"timeline": {
 			"position_ms": position_ms,
 			"start_ms": start_ms,
