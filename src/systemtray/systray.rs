@@ -406,17 +406,18 @@ fn open_or_focus_ui(ui_child: &mut Option<Child>) {
     }
 }
 
-fn load_icon(path: &std::path::Path) -> tray_icon::Icon {
-    info!("Loading tray icon from {}", path.display());
-    let (icon_rgba, icon_width, icon_height) = {
-        let image = image::open(path)
-            .expect("Failed to open icon path")
-            .into_rgba8();
-        let (width, height) = image.dimensions();
-        let rgba = image.into_raw();
-        (rgba, width, height)
-    };
-    tray_icon::Icon::from_rgba(icon_rgba, icon_width, icon_height).expect("Failed to create tray icon")
+fn load_icon(_path: &std::path::Path) -> tray_icon::Icon {
+    // Embed icon bytes at compile time so it works regardless of where the
+    // binary is running from (dev tree, ~/.Sentinel, etc.).
+    static ICON_PNG: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icon.png"));
+
+    info!("Loading embedded tray icon ({} bytes)", ICON_PNG.len());
+    let image = image::load_from_memory(ICON_PNG)
+        .expect("Failed to decode embedded icon")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    let rgba = image.into_raw();
+    tray_icon::Icon::from_rgba(rgba, width, height).expect("Failed to create tray icon")
 }
 
 pub fn spawn_tray() {

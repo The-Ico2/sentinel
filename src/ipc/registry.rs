@@ -105,68 +105,73 @@ pub fn discover_assets(assets_root: &Path) -> Vec<RegistryEntry> {
     info!("Discovering assets in '{}'", assets_root.display());
     let mut entries = Vec::new();
 
-    if let Ok(read_dir) = std::fs::read_dir(assets_root) {
-        for category in read_dir.flatten() {
-            let category_path = category.path();
-            let category_name = category_path.file_name().unwrap().to_string_lossy().to_string();
+    let Ok(read_dir) = std::fs::read_dir(assets_root) else {
+        warn!("Assets root '{}' not found or unreadable", assets_root.display());
+        return entries;
+    };
 
-            for asset in walkdir::WalkDir::new(&category_path)
-                .min_depth(1)
-                .max_depth(2)
-                .into_iter()
-                .filter_map(Result::ok)
-            {
-                if asset.file_name() == "manifest.json" {
-                    if let Ok(data) = std::fs::read_to_string(asset.path()) {
-                        match serde_json::from_str::<Value>(&data) {
-                            Ok(mut meta) => {
-                                info!(
-                                    "Discovered asset: {} ({})",
-                                    meta["id"].as_str().unwrap_or("unknown"),
-                                    category_name
-                                );
+    for category in read_dir.flatten() {
+        let category_path = category.path();
+        if !category_path.is_dir() { continue; }
+        let category_name = category_path.file_name().unwrap().to_string_lossy().to_string();
 
-                                // Handle exe_path if present
-                                let exe_path = if let Some(exe_rel) = meta["exe_path"].as_str() {
-                                    let exe_abs = asset.path().parent().unwrap().join(exe_rel);
-                                    if !exe_abs.exists() {
-                                        warn!(
-                                            "Asset '{}' exe path does not exist: {}",
-                                            meta["id"].as_str().unwrap_or("unknown"),
-                                            exe_abs.display()
-                                        );
-                                    }
-                                    meta["exe_path"] = Value::String(exe_abs.to_string_lossy().to_string());
-                                    exe_abs.to_string_lossy().to_string()
-                                } else {
-                                    "NULL".into()
-                                };
+        let Ok(asset_dirs) = std::fs::read_dir(&category_path) else { continue };
+        for asset_entry in asset_dirs.flatten() {
+            let asset_dir = asset_entry.path();
+            if !asset_dir.is_dir() { continue; }
 
-                                entries.push(RegistryEntry {
-                                    id: meta["id"].as_str().unwrap_or("").to_string(),
-                                    category: category_name.clone(),
-                                    subtype: asset
-                                        .path()
-                                        .parent()
-                                        .and_then(|p| p.file_name())
-                                        .unwrap()
-                                        .to_string_lossy()
-                                        .to_string(),
-                                    metadata: meta,
-                                    path: asset.path().parent().unwrap().to_path_buf(),
-                                    exe_path,
-                                });
-                            }
-                            Err(e) => warn!("Failed to parse asset manifest '{}': {e}", asset.path().display()),
+            // Try manifest.json first, then fall back to meta.json
+            let manifest_path = asset_dir.join("manifest.json");
+            let meta_path     = asset_dir.join("meta.json");
+
+            let (data_path, data) = if let Ok(d) = std::fs::read_to_string(&manifest_path) {
+                (manifest_path, d)
+            } else if let Ok(d) = std::fs::read_to_string(&meta_path) {
+                (meta_path, d)
+            } else {
+                continue;
+            };
+
+            match serde_json::from_str::<Value>(&data) {
+                Ok(mut meta) => {
+                    info!(
+                        "Discovered asset: {} ({})",
+                        meta["id"].as_str().unwrap_or("unknown"),
+                        category_name
+                    );
+
+                    // Handle exe_path if present
+                    let exe_path = if let Some(exe_rel) = meta["exe_path"].as_str() {
+                        let exe_abs = asset_dir.join(exe_rel);
+                        if !exe_abs.exists() {
+                            warn!(
+                                "Asset '{}' exe path does not exist: {}",
+                                meta["id"].as_str().unwrap_or("unknown"),
+                                exe_abs.display()
+                            );
                         }
+                        meta["exe_path"] = Value::String(exe_abs.to_string_lossy().to_string());
+                        exe_abs.to_string_lossy().to_string()
                     } else {
-                        warn!("Failed to read asset manifest '{}'", asset.path().display());
-                    }
+                        "NULL".into()
+                    };
+
+                    entries.push(RegistryEntry {
+                        id: meta["id"].as_str().unwrap_or("").to_string(),
+                        category: category_name.clone(),
+                        subtype: asset_dir
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string(),
+                        metadata: meta,
+                        path: asset_dir.clone(),
+                        exe_path,
+                    });
                 }
+                Err(e) => warn!("Failed to parse asset manifest '{}': {e}", data_path.display()),
             }
         }
-    } else {
-        warn!("Assets root '{}' not found or unreadable", assets_root.display());
     }
 
     entries
