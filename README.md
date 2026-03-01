@@ -103,7 +103,12 @@ The registry tracks four top-level categories:
 
 A file watcher monitors `Addons/` and `Assets/` for changes to `addon.json` and `manifest.json` files. When changes are detected, the registry automatically rebuilds and rewrites `registry.json`.
 
-The data updater thread continuously polls system data at a configurable interval (default 100ms) and writes to the registry only when values change.
+The data updater uses a **dual-tier, event-driven** polling model:
+
+* **Fast tier** (default 50ms) — Lightweight data: time, keyboard, mouse, audio, idle, power
+* **Slow tier** (default 1000ms) — Heavyweight data: cpu, gpu, ram, storage, network, processes, system
+
+Threads use condvar-based waking — they respond instantly to demand changes instead of sleeping on fixed timers. A UI heartbeat mechanism (2500ms TTL) allows the Sentinel UI to force active updates while it's open.
 
 ---
 
@@ -160,7 +165,8 @@ All commands return structured JSON from the live registry.
 | `get_power` | AC status, battery percent/charging/health/chemistry, power plan, estimated runtime, battery saver state |
 | `get_keyboard` | Layout ID, type/subtype, function key count, toggle states (Caps/Num/Scroll Lock, Insert) |
 | `get_mouse` | Cursor position, button count/swap, wheel present, speed, screen dimensions, monitor count |
-| `get_audio` | Default playback/capture endpoints, volume/mute, all endpoints with levels; active media session (title, artist, album, playback status, timeline, shuffle, repeat, source app) |
+| `get_audio` | Default playback/capture endpoints, volume/mute, all endpoints with levels |
+| `get_media` | Active media session: title, artist, album, playback status, timeline position, shuffle, repeat, source app |
 | `get_bluetooth` | Adapter presence/name/status, paired & connected devices with name, status, class, instance ID |
 | `get_wifi` | Connected SSID/BSSID, signal strength, radio type, band, channel, auth/cipher, transmit/receive rate, interface list |
 | `get_system` | OS name/version/kernel/arch, hostname/username/domain, locale, Windows theme (dark/light, accent color, transparency), BIOS & motherboard info |
@@ -179,6 +185,8 @@ All commands return structured JSON from the live registry.
 | `list_assets` | List all discovered assets |
 | `list_sysdata` | Full system data snapshot |
 | `list_appdata` | Active window data per monitor |
+| `snapshot` | Combined `sysdata` + `appdata` in one response (accepts optional `sections` arg for tracking demands) |
+| `full` | Full registry dump including addons, assets, sysdata, appdata, and metadata |
 
 #### `addon` — Addon Lifecycle
 
@@ -192,9 +200,14 @@ All commands return structured JSON from the live registry.
 
 | Command | Args | Description |
 | --------- | ------ | ------------- |
-| `get_config` | — | Get current pull rate and pause state |
-| `set_pull_rate` | `{ "rate_ms": 200 }` | Set data poll interval (0–5000ms) |
-| `set_pull_paused` | `{ "paused": true }` | Pause/resume system data polling |
+| `get_config` | — | Get current config (fast/slow pull rates, pause state, refresh-on-request, UI data exception) |
+| `set_fast_pull_rate` | `{ "rate_ms": 50 }` | Set fast-tier poll interval (time, keyboard, mouse, audio, idle, power) |
+| `set_slow_pull_rate` | `{ "rate_ms": 1000 }` | Set slow-tier poll interval (cpu, gpu, ram, storage, network, processes) |
+| `set_pull_paused` | `{ "paused": true }` | Pause/resume all system data polling |
+| `set_refresh_on_request` | `{ "enabled": true }` | Refresh fast-tier data inline on IPC sysdata requests |
+| `set_ui_data_exception_enabled` | `{ "enabled": true }` | Allow UI heartbeat to force active updates |
+| `ui_heartbeat` | — | Signal that the Sentinel UI is open (resets 2500ms TTL) |
+| `set_tracking_demands` | `{ "sections": [...] }` | Set which data sections to actively poll |
 
 ---
 
@@ -250,11 +263,14 @@ Sentinel includes a built-in configuration UI system for addons. When launched w
 The backend's own config lives at `~/.Sentinel/config.yaml`:
 
 ```yaml
-data_pull_rate_ms: 100    # System data poll interval (0–5000ms)
-data_pull_paused: false   # Pause system data polling
+fast_pull_rate_ms: 50          # Fast-tier interval: time, keyboard, mouse, audio, idle, power
+slow_pull_rate_ms: 1000        # Slow-tier interval: cpu, gpu, ram, storage, network, processes
+data_pull_paused: false        # Pause all system data polling
+refresh_on_request: false      # Refresh fast-tier inline on IPC sysdata requests
+ui_data_exception_enabled: true  # UI heartbeat forces active updates while open
 ```
 
-Both values can be changed at runtime via the `backend` IPC namespace and are persisted to disk.
+All values can be changed at runtime via the `backend` IPC namespace and are persisted to disk.
 
 ---
 
@@ -276,13 +292,13 @@ It is **not** intended to be a one-click theming tool—it is a platform.
 * **Language:** Rust
 * **Platform:** Windows 10/11 (Win32 API, WinRT)
 * **IPC:** Named pipes (`\\.\pipe\sentinel`) with JSON request/response
-* **Key crates:** `windows` 0.62, `sysinfo`, `tao`, `tray-icon`, `wry`, `eframe`, `serde_json`, `serde_yaml`, `chrono`, `notify`, `clap`
+* **Key crates:** `windows` 0.62, `sysinfo`, `tao`, `tray-icon`, `wry`, `eframe`, `serde_json`, `serde_yaml`, `chrono`, `notify`, `clap`, `tokio`, `rustfft`
 
 ---
 
 ## Project Status
 
-Sentinel is under active development (`v0.1.0-alpha`). APIs, internal structures, and behavior may change as the architecture evolves. Linux and macOS modules are scaffolded but not functional.
+Sentinel is under active development (`v0.2.2`). APIs, internal structures, and behavior may change as the architecture evolves. Linux and macOS modules are scaffolded but not functional.
 
 ---
 
