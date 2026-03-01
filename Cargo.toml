@@ -1,5 +1,5 @@
 [package]
-name = "sentinelc"
+name = "sentinel-core"
 version = "0.2.2"
 edition = "2021"
 authors = ["Ico2"]

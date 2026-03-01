@@ -19,7 +19,7 @@ use crate::{info, warn, error};
 const PIPE_NAME: &str = r"\\.\pipe\sentinel";
 const PIPE_ACCESS_DUPLEX: u32 = 0x00000003;
 
-const BUFFER_SIZE: u32 = 256 * 1024;
+const BUFFER_SIZE: u32 = 1024 * 1024;
 
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
@@ -30,10 +30,13 @@ fn to_wide(s: &str) -> Vec<u16> {
 pub fn start_ipc_server() {
     info!("Starting IPC server on pipe '{}'", PIPE_NAME);
 
+    // Keep the wide string alive for the entire server lifetime.
+    let pipe_name_wide = to_wide(PIPE_NAME);
+
     unsafe {
         loop {
             let pipe = CreateNamedPipeW(
-                PCWSTR(to_wide(PIPE_NAME).as_ptr()),
+                PCWSTR(pipe_name_wide.as_ptr()),
                 FILE_FLAGS_AND_ATTRIBUTES(PIPE_ACCESS_DUPLEX),
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
                 PIPE_UNLIMITED_INSTANCES,
@@ -104,19 +107,36 @@ unsafe fn handle_client(pipe: HANDLE) {
 }
 
 unsafe fn send(pipe: HANDLE, resp: IpcResponse) {
-    let bytes = to_vec(&resp).unwrap_or_else(|e| {
-        error!("Failed to serialize IPC response: {e}");
-        Vec::new()
-    });
+    let bytes = match to_vec(&resp) {
+        Ok(b) if !b.is_empty() => b,
+        Ok(_) => {
+            error!("IPC response serialized to empty payload");
+            return;
+        }
+        Err(e) => {
+            error!("Failed to serialize IPC response: {e}");
+            return;
+        }
+    };
+
     let mut written = 0u32;
-    if WriteFile(pipe, Some(&bytes), Some(&mut written), None).is_err() {
-        warn!("Failed to write IPC response");
+    if let Err(e) = WriteFile(pipe, Some(&bytes), Some(&mut written), None) {
+        // Extract the Win32 error code from the HRESULT (low 16 bits).
+        let win32 = (e.code().0 & 0xFFFF) as u32;
+        // ERROR_BROKEN_PIPE (109) or ERROR_NO_DATA (232) means
+        // the client disconnected before we could write — not alarming.
+        if win32 != 109 && win32 != 232 {
+            warn!("Failed to write IPC response: {:?}", e);
+        }
         return;
     }
 
     // Ensure the response is committed to the client side before the
     // handler thread disconnects/closes this pipe instance.
-    if FlushFileBuffers(pipe).is_err() {
-        warn!("Failed to flush IPC response buffer");
+    if let Err(e) = FlushFileBuffers(pipe) {
+        let win32 = (e.code().0 & 0xFFFF) as u32;
+        if win32 != 109 && win32 != 232 {
+            warn!("Failed to flush IPC response buffer: {:?}", e);
+        }
     }
 }
