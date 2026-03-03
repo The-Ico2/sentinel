@@ -27,10 +27,28 @@ fn to_wide(s: &str) -> Vec<u16> {
 
 
 
-pub fn start_ipc_server() {
-    info!("Starting IPC server on pipe '{}'", PIPE_NAME);
+/// Number of concurrent accept-loop threads.
+/// With N listeners there are always N idle pipe instances waiting for
+/// connections, eliminating the "pipe busy" race that occurs with a single
+/// loop (the gap between `ConnectNamedPipe` returning and the next
+/// `CreateNamedPipeW` call).
+const LISTENER_POOL_SIZE: usize = 4;
 
-    // Keep the wide string alive for the entire server lifetime.
+pub fn start_ipc_server() {
+    info!("Starting IPC server on pipe '{}' ({} listeners)",
+          PIPE_NAME, LISTENER_POOL_SIZE);
+
+    // Spawn N-1 background listener threads …
+    for _ in 1..LISTENER_POOL_SIZE {
+        thread::spawn(|| ipc_accept_loop());
+    }
+
+    // … and run the last one on *this* thread (blocks forever, preserving
+    // the original calling convention).
+    ipc_accept_loop();
+}
+
+fn ipc_accept_loop() {
     let pipe_name_wide = to_wide(PIPE_NAME);
 
     unsafe {
@@ -58,9 +76,8 @@ pub fn start_ipc_server() {
             };
 
             if connected {
-                // Spawn a handler thread so the accept loop immediately creates
-                // the next pipe instance.  This allows concurrent IPC clients
-                // (wallpaper polling + tray commands) without "pipe busy" errors.
+                // Spawn a handler thread so this accept loop immediately
+                // creates the next pipe instance.
                 let raw = pipe.0 as usize;           // pointer → integer (Send)
                 thread::spawn(move || {
                     let pipe = HANDLE(raw as *mut _); // restore on worker thread

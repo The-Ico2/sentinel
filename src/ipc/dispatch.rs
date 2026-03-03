@@ -5,6 +5,7 @@ mod registryd;
 mod sysdatad;
 mod addond;
 mod backendd;
+mod trackingd;
 
 pub fn dispatch(
     ns: &str,
@@ -16,6 +17,7 @@ pub fn dispatch(
         "sysdata" => sysdatad::dispatch_sysdata(cmd),
         "addon" => addond::dispatch_addon(cmd, args),
         "backend" => backendd::dispatch_backend(cmd, args),
+        "tracking" => trackingd::dispatch_tracking(cmd, args),
         _ => {
             warn!("[IPC] Unknown namespace requested: '{}'", ns);
             Err(format!("Unknown namespace: {}", ns))

@@ -207,7 +207,7 @@ pub fn bootstrap_user_root() {
     };
 
     let exe_name = current_exe.file_name().unwrap_or_default().to_string_lossy();
-    let dst = sentinel.join("sentinelc.exe");
+    let dst = sentinel.join("sentinel-core.exe");
 
     info!("Source: {}", current_exe.display());
     info!("Target: {}", dst.display());

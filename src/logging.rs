@@ -117,6 +117,6 @@ fn log_path() -> &'static PathBuf {
     LOG_PATH.get_or_init(|| {
         let logs_dir = crate::paths::sentinel_root_dir().join("logs");
         let _ = std::fs::create_dir_all(&logs_dir);
-        logs_dir.join("sentinelc.log")
+        logs_dir.join("sentinel.core.log")
     })
 }

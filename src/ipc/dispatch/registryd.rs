@@ -19,7 +19,7 @@ pub fn dispatch_registry(cmd: &str, args: Option<Value>) -> Result<Value, String
     let sections_arg = sections_from_args(args.as_ref());
     let _sections = sections_arg.clone().unwrap_or_default();
 
-    if cmd == "snapshot" {
+    if cmd == "snapshot" || cmd == "get_data" {
         if let Some(explicit_sections) = sections_arg {
             set_explicit_tracking_demands(&explicit_sections);
         }
@@ -37,9 +37,10 @@ pub fn dispatch_registry(cmd: &str, args: Option<Value>) -> Result<Value, String
         "list_assets" => Ok(output.get("assets").cloned().unwrap_or(Value::Null)),
         "list_sysdata" => Ok(output.get("sysdata").cloned().unwrap_or(Value::Null)),
         "list_appdata" => Ok(output.get("appdata").cloned().unwrap_or(Value::Null)),
+
         // Combined snapshot — returns sysdata + appdata in a single response
         // so callers only need one IPC round-trip instead of two.
-        "snapshot" => {
+        "snapshot" | "get_data" => {
             let sysdata = output.get("sysdata").cloned().unwrap_or(Value::Null);
             let appdata = output.get("appdata").cloned().unwrap_or(Value::Null);
             Ok(serde_json::json!({ "sysdata": sysdata, "appdata": appdata }))
