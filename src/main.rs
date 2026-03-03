@@ -74,6 +74,12 @@ impl SentinelDaemon {
             info!("IPC server thread terminated");
         });
 
+        // 2b. HTTP bridge for browser-based wallpaper prototyping
+        info!("Spawning HTTP bridge thread");
+        std::thread::spawn(|| {
+            crate::ipc::http_bridge::start_http_bridge();
+        });
+
         // 3. Data updater threads populate sysdata in the background
         info!("Starting live data updater");
         crate::ipc::data_updater::start_registry_updater();

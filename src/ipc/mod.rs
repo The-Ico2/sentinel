@@ -9,3 +9,4 @@ pub mod sysdata;
 pub mod appdata;
 pub mod data_updater;
 pub mod addon;
+pub mod http_bridge;
