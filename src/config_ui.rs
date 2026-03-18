@@ -175,6 +175,9 @@ struct ShellIpcMessage {
     manifest_path: Option<String>,
     // For ui_view_mode
     view_mode: Option<String>,
+    // For ui_renderer_mode
+    #[serde(alias = "renderer_mode")]
+    renderer_mode: Option<String>,
     // For open_external_url
     url: Option<String>,
 }
@@ -404,6 +407,8 @@ fn run_sentinel_custom_tabs_shell(
         let protocol_root = sentinel_home.clone();
         let ui_view_mode = Arc::new(Mutex::new("addon".to_string()));
         let ui_view_mode_ipc = Arc::clone(&ui_view_mode);
+        let ui_renderer_mode = Arc::new(Mutex::new("webview2".to_string()));
+        let ui_renderer_mode_ipc = Arc::clone(&ui_renderer_mode);
 
         let webview = WebViewBuilder::new()
                 .with_custom_protocol("sentinel".to_string(), move |_webview_id, request| {
@@ -493,6 +498,7 @@ fn run_sentinel_custom_tabs_shell(
                 .with_ipc_handler(move |request| {
                     let payload = request.body().to_string();
                     let ui_view_mode_ipc = Arc::clone(&ui_view_mode_ipc);
+                    let ui_renderer_mode_ipc = Arc::clone(&ui_renderer_mode_ipc);
                     warn!("[ui] IPC handler invoked, payload length={}", payload.len());
                     let result = std::panic::catch_unwind(move || {
                         let Some(message) = parse_shell_ipc_message(&payload) else {
@@ -636,6 +642,15 @@ fn run_sentinel_custom_tabs_shell(
                                     }
                                 }
                             }
+                            "ui_renderer_mode" => {
+                                if let Some(mode) = message.renderer_mode.or_else(|| message.value.and_then(|v| v.as_str().map(|s| s.to_string()))) {
+                                    let normalized = mode.to_lowercase();
+                                    if let Ok(mut guard) = ui_renderer_mode_ipc.lock() {
+                                        *guard = normalized.clone();
+                                    }
+                                    warn!("[ui] Renderer mode set to '{}'", normalized);
+                                }
+                            }
                             "open_external_url" => {
                                 let Some(url) = message.url else {
                                     warn!("[ui] open_external_url missing url");
@@ -680,19 +695,27 @@ fn run_sentinel_custom_tabs_shell(
         let snapshot_home = sentinel_home.clone();
 
         event_loop.run(move |event, _, control_flow| {
-                const UI_POLL_MS_ACTIVE_DATA: u64 = 80;
-            const UI_POLL_MS_ACTIVE_ADDON: u64 = 900;
-                const UI_POLL_MS_IDLE: u64 = 750;
+                const UI_POLL_MS_ACTIVE_DATA_WEBVIEW: u64 = 80;
+            const UI_POLL_MS_ACTIVE_ADDON_WEBVIEW: u64 = 900;
+                const UI_POLL_MS_IDLE_WEBVIEW: u64 = 750;
+                const UI_POLL_MS_ACTIVE_DATA_CANVASX: u64 = 125;
+            const UI_POLL_MS_ACTIVE_ADDON_CANVASX: u64 = 1200;
+                const UI_POLL_MS_IDLE_CANVASX: u64 = 950;
                 let current_view_mode = ui_view_mode
                     .lock()
                     .map(|mode| mode.clone())
                     .unwrap_or_else(|_| "addon".to_string());
+                let current_renderer_mode = ui_renderer_mode
+                    .lock()
+                    .map(|mode| mode.clone())
+                    .unwrap_or_else(|_| "webview2".to_string());
+                let canvasx_renderer = current_renderer_mode == "canvasx";
                 let data_view_active = current_view_mode == "data";
                 let addon_view_active = current_view_mode == "addon";
                 let ui_poll_ms = if data_view_active {
-                    UI_POLL_MS_ACTIVE_DATA
+                    if canvasx_renderer { UI_POLL_MS_ACTIVE_DATA_CANVASX } else { UI_POLL_MS_ACTIVE_DATA_WEBVIEW }
                 } else {
-                    UI_POLL_MS_IDLE
+                    if canvasx_renderer { UI_POLL_MS_IDLE_CANVASX } else { UI_POLL_MS_IDLE_WEBVIEW }
                 };
 
                 *control_flow = ControlFlow::WaitUntil(
@@ -766,9 +789,9 @@ fn run_sentinel_custom_tabs_shell(
                 // through the named-pipe IPC (registry/full) so we get the
                 // live in-memory state including __meta, addons, and assets.
                 let registry_poll_ms = if data_view_active {
-                    UI_POLL_MS_ACTIVE_DATA
+                    if canvasx_renderer { UI_POLL_MS_ACTIVE_DATA_CANVASX } else { UI_POLL_MS_ACTIVE_DATA_WEBVIEW }
                 } else if addon_view_active {
-                    UI_POLL_MS_ACTIVE_ADDON
+                    if canvasx_renderer { UI_POLL_MS_ACTIVE_ADDON_CANVASX } else { UI_POLL_MS_ACTIVE_ADDON_WEBVIEW }
                 } else {
                     0
                 };
@@ -2987,11 +3010,18 @@ fn build_sentinel_custom_tabs_shell_html(
                     '<div class="setting-row"><span class="s-label">Theme</span>' +
                         '<select id="cfg-theme" class="s-input"><option value="dark" selected>Dark</option><option value="light">Light</option></select>' +
                     '</div>' +
+                    '<div class="setting-row"><span class="s-label">Renderer</span>' +
+                        '<select id="cfg-renderer" class="s-input">' +
+                            '<option value="webview2" selected>WebView2</option>' +
+                            '<option value="canvasx">CanvasX (Adaptive Polling)</option>' +
+                        '</select>' +
+                    '</div>' +
                 '</div>';
             var fastEl = document.getElementById('cfg-fast-rate');
             var slowEl = document.getElementById('cfg-slow-rate');
             var rorEl = document.getElementById('cfg-refresh-on-req');
             var pauseEl = document.getElementById('cfg-pull-paused');
+            var rendererEl = document.getElementById('cfg-renderer');
             var fastTimer = null;
             var slowTimer = null;
             if (fastEl) fastEl.addEventListener('input', function() {{
@@ -3021,6 +3051,10 @@ fn build_sentinel_custom_tabs_shell_html(
                 if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
                 window.__sentinelConfig.data_pull_paused = pauseEl.checked;
                 window.__sentinelBridgePost({{ type: 'backend_setting', key: 'pull_paused', value: pauseEl.checked }});
+            }});
+            if (rendererEl) rendererEl.addEventListener('change', function() {{
+                var mode = (rendererEl.value || 'webview2').toLowerCase();
+                window.__sentinelBridgePost({{ type: 'ui_renderer_mode', renderer_mode: mode }});
             }});
         }}
 

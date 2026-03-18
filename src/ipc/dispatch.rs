@@ -6,6 +6,7 @@ mod sysdatad;
 mod addond;
 mod backendd;
 mod trackingd;
+mod controld;
 
 pub fn dispatch(
     ns: &str,
@@ -18,6 +19,7 @@ pub fn dispatch(
         "addon" => addond::dispatch_addon(cmd, args),
         "backend" => backendd::dispatch_backend(cmd, args),
         "tracking" => trackingd::dispatch_tracking(cmd, args),
+        "control" => controld::dispatch_control(cmd, args),
         _ => {
             warn!("[IPC] Unknown namespace requested: '{}'", ns);
             Err(format!("Unknown namespace: {}", ns))
