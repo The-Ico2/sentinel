@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/dispatch/registryd.rs
+// ~/opendesktop/od-backend/src/ipc/dispatch/registryd.rs
 
 use serde_json::Value;
 use crate::ipc::data_updater::set_explicit_tracking_demands;
@@ -46,7 +46,7 @@ pub fn dispatch_registry(cmd: &str, args: Option<Value>) -> Result<Value, String
             Ok(serde_json::json!({ "sysdata": sysdata, "appdata": appdata }))
         }
         // Full registry output including addons, assets, __meta — used by
-        // the Sentinel UI Data page so it can display everything.
+        // the OpenDesktop UI Data page so it can display everything.
         "full" => Ok(output),
         _ => Err(format!("Unknown registry command: {}", cmd)),
     }

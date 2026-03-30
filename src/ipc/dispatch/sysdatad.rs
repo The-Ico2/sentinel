@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/dispatch/sysdatad.rs
+// ~/opendesktop/od-backend/src/ipc/dispatch/sysdatad.rs
 
 use serde_json::Value;
 use crate::ipc::sysdata::display::MonitorManager;

@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/sysdata/wifi.rs
+// ~/opendesktop/od-backend/src/ipc/sysdata/wifi.rs
 
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;

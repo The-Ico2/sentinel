@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/utils.rs
+// ~/opendesktop/od-backend/src/utils.rs
 
 use windows::{
     core::Result,

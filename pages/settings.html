@@ -1,0 +1,85 @@
+<div class="page-content">
+  <div class="page">
+    <div class="page-header">
+      <span class="page-header-label">Configuration</span>
+      <h1>Settings</h1>
+      <p class="subtitle">Backend and UI preferences</p>
+    </div>
+
+    <div class="settings-group">
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <h2>Data Pipeline</h2>
+          <p class="settings-section-desc">Control how the backend collects system data</p>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Fast Pull Rate (ms)</span>
+            <span class="setting-description">Interval for high-priority data sources</span>
+          </div>
+          <span class="setting-value" id="setting-fast-rate">50</span>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Slow Pull Rate (ms)</span>
+            <span class="setting-description">Interval for low-priority data sources</span>
+          </div>
+          <span class="setting-value" id="setting-slow-rate">500</span>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Pause Data Pulling</span>
+            <span class="setting-description">Temporarily stop all data collection</span>
+          </div>
+          <button class="btn-secondary" id="setting-pause-btn"
+            data-action="ipc" data-ns="settings" data-cmd="toggle-pause">Resume</button>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Refresh on Request</span>
+            <span class="setting-description">Force a fresh data pull when an addon requests it</span>
+          </div>
+          <button class="btn-secondary" id="setting-refresh-btn"
+            data-action="ipc" data-ns="settings" data-cmd="toggle-refresh">Enabled</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <h2>Directories</h2>
+          <p class="settings-section-desc">Installation and data paths</p>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">OpenDesktop Home</span>
+            <span class="setting-description path-label" id="od-home-path">~/ProjectOpen/OpenDesktop</span>
+          </div>
+          <button class="btn-secondary" data-action="ipc" data-ns="app" data-cmd="open-folder">Browse</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <h2>About</h2>
+        </div>
+
+        <div class="about-section">
+          <div class="about-row">
+            <span class="about-label">Version</span>
+            <span class="about-value" id="od-version">0.2.2</span>
+          </div>
+          <div class="about-row">
+            <span class="about-label">Renderer</span>
+            <span class="about-value">OpenRender</span>
+          </div>
+          <p class="about-tagline">Open-source desktop customization platform</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

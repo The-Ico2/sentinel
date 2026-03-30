@@ -1,16 +1,16 @@
-# Sentinel Desktop Customization Platform
+# OpenDesktop Desktop Customization Platform
 
 > **Note:** This is my first Rust project, and I'm actively learning as I build. Expect rough edges and architectural evolution. If you spot bugs, design issues, or potential improvements, feel free to open a PR or reach out to me on **Discord** or **X (formerly Twitter)**.
 
-Sentinel is a modular, extensible desktop customization platform designed primarily for Windows. Its purpose is to serve as a **central runtime, registry, and orchestration layer** for desktop enhancements—such as status bars, widgets, system integrations, and background services—without locking users or developers into a single UI framework or workflow.
+OpenDesktop is a modular, extensible desktop customization platform designed primarily for Windows. Its purpose is to serve as a **central runtime, registry, and orchestration layer** for desktop enhancements—such as status bars, widgets, system integrations, and background services—without locking users or developers into a single UI framework or workflow.
 
-Rather than being a single monolithic application, Sentinel is best understood as a **desktop operating layer**: a persistent backend service responsible for managing addons, exposing system data, coordinating IPC, and providing a stable foundation on which highly customizable desktop components can be built.
+Rather than being a single monolithic application, OpenDesktop is best understood as a **desktop operating layer**: a persistent backend service responsible for managing addons, exposing system data, coordinating IPC, and providing a stable foundation on which highly customizable desktop components can be built.
 
 ---
 
 ## High-Level Philosophy
 
-Sentinel is built around a few core principles:
+OpenDesktop is built around a few core principles:
 
 * **Everything is an addon**
   Status bars, widgets, background services, and integrations are all treated as first-class addons.
@@ -24,15 +24,15 @@ Sentinel is built around a few core principles:
 * **Developer-friendly by design**
   Explicit data models, observable state, and minimal hidden behavior.
 
-The project intentionally avoids becoming "just another bar" or "just another widget engine." Instead, Sentinel aims to be the **platform those tools are built on**.
+The project intentionally avoids becoming "just another bar" or "just another widget engine." Instead, OpenDesktop aims to be the **platform those tools are built on**.
 
 ---
 
-## What Sentinel Does
+## What OpenDesktop Does
 
-At its core, Sentinel runs as a long-lived background process (`sentinelc.exe`) that:
+At its core, OpenDesktop runs as a long-lived background process (`odc.exe`) that:
 
-* **Self-installs** — Run the EXE from anywhere and it copies itself to `~/.Sentinel/`, creates the directory structure (`Addons/`, `Assets/`, `logs/`), and relaunches from the installed location.
+* **Self-installs** — Run the EXE from anywhere and it copies itself to `~/ProjectOpen/OpenDesktop/`, creates the directory structure (`Addons/`, `Assets/`, `logs/`), and relaunches from the installed location.
 * **Single-instance enforcement** — A global mutex prevents duplicate backend processes.
 * Manages addon lifecycles (discovery, autostart, starting, stopping, reloading)
 * Maintains a **live registry** of addons, assets, and system data
@@ -41,33 +41,33 @@ At its core, Sentinel runs as a long-lived background process (`sentinelc.exe`) 
 * Integrates with the system tray as a runtime control surface
 * Provides per-addon configuration UI via WebView2
 
-Sentinel is designed to be authoritative: addons may come and go, but Sentinel remains the source of truth for system state and runtime coordination.
+OpenDesktop is designed to be authoritative: addons may come and go, but OpenDesktop remains the source of truth for system state and runtime coordination.
 
 ---
 
 ## Bootstrap & Self-Install
 
-When `sentinelc.exe` is launched, it:
+When `odc.exe` is launched, it:
 
-1. Creates `~/.Sentinel/` if it doesn't exist, along with `Addons/` and `Assets/` subdirectories
-2. If not already running from `~/.Sentinel/`, copies itself there and relaunches
-3. Initializes logging to `~/.Sentinel/logs/sentinelc.log`
+1. Creates `~/ProjectOpen/OpenDesktop/` if it doesn't exist, along with `Addons/` and `Assets/` subdirectories
+2. If not already running from `~/ProjectOpen/OpenDesktop/`, copies itself there and relaunches
+3. Initializes logging to `~/ProjectOpen/OpenDesktop/logs/odc.log`
 4. Starts the registry manager, IPC server, data updater, and system tray
 
-Addons follow the same self-install pattern: each copies itself to `~/.Sentinel/Addons/<name>/bin/`, scaffolds default config files (`addon.json`, `config.yaml`, `schema.yaml`), and relaunches from the installed location.
+Addons follow the same self-install pattern: each copies itself to `~/ProjectOpen/OpenDesktop/Addons/<name>/bin/`, scaffolds default config files (`addon.json`, `config.yaml`, `schema.yaml`), and relaunches from the installed location.
 
 ---
 
 ## File Layout
 
 ```ps1
-~/.Sentinel/
-├── sentinelc.exe
+~/.OpenDesktop/
+├── odc.exe
 ├── config.yaml                 # Backend config (pull rate, pause state)
 ├── registry.json               # Live registry snapshot (auto-written)
 ├── tray_settings.json          # Addon autostart & startup preferences
 ├── logs/
-│   └── sentinelc.log
+│   └── odc.log
 ├── Addons/
 │   └── <addon-name>/
 │       ├── addon.json          # Addon manifest (id, name, exe_path, etc.)
@@ -87,7 +87,7 @@ Addons follow the same self-install pattern: each copies itself to `~/.Sentinel/
 
 ## Registry-Driven Architecture
 
-A core concept in Sentinel is the **registry**.
+A core concept in OpenDesktop is the **registry**.
 
 The registry exists as both:
 
@@ -108,13 +108,13 @@ The data updater uses a **dual-tier, event-driven** polling model:
 * **Fast tier** (default 50ms) — Lightweight data: time, keyboard, mouse, audio, idle, power
 * **Slow tier** (default 1000ms) — Heavyweight data: cpu, gpu, ram, storage, network, processes, system
 
-Threads use condvar-based waking — they respond instantly to demand changes instead of sleeping on fixed timers. A UI heartbeat mechanism (2500ms TTL) allows the Sentinel UI to force active updates while it's open.
+Threads use condvar-based waking — they respond instantly to demand changes instead of sleeping on fixed timers. A UI heartbeat mechanism (2500ms TTL) allows the OpenDesktop UI to force active updates while it's open.
 
 ---
 
 ## Addons
 
-Addons are the primary extension mechanism in Sentinel.
+Addons are the primary extension mechanism in OpenDesktop.
 
 An addon can be:
 
@@ -130,13 +130,13 @@ Each addon:
 * Is discovered and registered by the backend on startup and when files change
 * Can be started, stopped, or reloaded independently via IPC or the system tray
 * Can be set to autostart when the backend launches
-* Communicates with Sentinel through named-pipe IPC
+* Communicates with OpenDesktop through named-pipe IPC
 
 ---
 
 ## IPC
 
-Sentinel exposes a named-pipe IPC server at `\\.\pipe\sentinel`. Addons send JSON requests and receive JSON responses.
+OpenDesktop exposes a named-pipe IPC server at `\\.\pipe\opendesktop`. Addons send JSON requests and receive JSON responses.
 
 ### Request Format
 
@@ -206,14 +206,14 @@ All commands return structured JSON from the live registry.
 | `set_pull_paused` | `{ "paused": true }` | Pause/resume all system data polling |
 | `set_refresh_on_request` | `{ "enabled": true }` | Refresh fast-tier data inline on IPC sysdata requests |
 | `set_ui_data_exception_enabled` | `{ "enabled": true }` | Allow UI heartbeat to force active updates |
-| `ui_heartbeat` | — | Signal that the Sentinel UI is open (resets 2500ms TTL) |
+| `ui_heartbeat` | — | Signal that the OpenDesktop UI is open (resets 2500ms TTL) |
 | `set_tracking_demands` | `{ "sections": [...] }` | Set which data sections to actively poll |
 
 ---
 
 ## Application Data
 
-Sentinel tracks active application state per monitor, giving addons real-time awareness of what the user is doing on the desktop:
+OpenDesktop tracks active application state per monitor, giving addons real-time awareness of what the user is doing on the desktop:
 
 * **Active Windows** — Per-monitor active window: app name, exe path, icon, window title, PID, focused state, window state (normal/maximized/fullscreen), size & position
 * **Tray Icons** — System tray notification area icons: process name, PID, exe path, tooltip, visibility, area (visible/overflow)
@@ -223,7 +223,7 @@ Sentinel tracks active application state per monitor, giving addons real-time aw
 
 ## Desktop Customization (Internal)
 
-Sentinel includes internal modules for direct Windows desktop integration. These are currently used as backend infrastructure and are **not yet exposed as IPC commands**:
+OpenDesktop includes internal modules for direct Windows desktop integration. These are currently used as backend infrastructure and are **not yet exposed as IPC commands**:
 
 * **Taskbar** — Show/hide/toggle the Windows taskbar (`Shell_TrayWnd`)
 * **Wallpaper** — Programmatic wallpaper management via `SystemParametersInfoW`
@@ -234,7 +234,7 @@ Sentinel includes internal modules for direct Windows desktop integration. These
 
 ## System Tray & Runtime Control
 
-Sentinel exposes a system tray interface that acts as the primary control surface for:
+OpenDesktop exposes a system tray interface that acts as the primary control surface for:
 
 * Starting and stopping individual addons
 * Toggling addon autostart (persisted in `tray_settings.json`)
@@ -249,7 +249,7 @@ The system tray dynamically discovers addons and rebuilds its menu when addons a
 
 ## Config UI
 
-Sentinel includes a built-in configuration UI system for addons. When launched with `--addon-config-ui`, it:
+OpenDesktop includes a built-in configuration UI system for addons. When launched with `--addon-config-ui`, it:
 
 * Reads the addon's `schema.yaml` to generate a settings interface
 * Supports controls: toggles, dropdowns, number ranges, text inputs, text lists, asset selectors
@@ -260,7 +260,7 @@ Sentinel includes a built-in configuration UI system for addons. When launched w
 
 ## Backend Configuration
 
-The backend's own config lives at `~/.Sentinel/config.yaml`:
+The backend's own config lives at `~/.OpenDesktop/config.yaml`:
 
 ```yaml
 fast_pull_rate_ms: 50          # Fast-tier interval: time, keyboard, mouse, audio, idle, power
@@ -276,7 +276,7 @@ All values can be changed at runtime via the `backend` IPC namespace and are per
 
 ## Intended Audience
 
-Sentinel is designed for:
+OpenDesktop is designed for:
 
 * Power users who want deep desktop customization
 * Developers building custom desktop UI components
@@ -291,14 +291,14 @@ It is **not** intended to be a one-click theming tool—it is a platform.
 
 * **Language:** Rust
 * **Platform:** Windows 10/11 (Win32 API, WinRT)
-* **IPC:** Named pipes (`\\.\pipe\sentinel`) with JSON request/response
+* **IPC:** Named pipes (`\\.\pipe\opendesktop`) with JSON request/response
 * **Key crates:** `windows` 0.62, `sysinfo`, `tao`, `tray-icon`, `wry`, `eframe`, `serde_json`, `serde_yaml`, `chrono`, `notify`, `clap`, `tokio`, `rustfft`
 
 ---
 
 ## Project Status
 
-Sentinel is under active development (`v0.2.2`). APIs, internal structures, and behavior may change as the architecture evolves. Linux and macOS modules are scaffolded but not functional.
+OpenDesktop is under active development (`v0.2.2`). APIs, internal structures, and behavior may change as the architecture evolves. Linux and macOS modules are scaffolded but not functional.
 
 ---
 

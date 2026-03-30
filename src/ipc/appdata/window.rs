@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/appdata/window.rs
+// ~/opendesktop/od-backend/src/ipc/appdata/window.rs
 
 use serde::Serialize;
 use std::{

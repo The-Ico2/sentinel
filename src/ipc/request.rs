@@ -19,7 +19,7 @@ pub struct IpcRequest {
     pub args: Option<Value>,
 }
 
-const PIPE_NAME: &str = r"\\.\pipe\sentinel";
+const PIPE_NAME: &str = r"\\.\pipe\opendesktop";
 const READ_CHUNK: usize = 64 * 1024;
 
 fn to_wide(s: &str) -> Vec<u16> {

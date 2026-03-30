@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/sysdata/idle.rs
+// ~/opendesktop/od-backend/src/ipc/sysdata/idle.rs
 
 use serde_json::{json, Value};
 use std::mem;

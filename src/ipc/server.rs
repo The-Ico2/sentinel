@@ -16,7 +16,7 @@ use crate::{
 };
 use crate::{info, warn, error};
 
-const PIPE_NAME: &str = r"\\.\pipe\sentinel";
+const PIPE_NAME: &str = r"\\.\pipe\opendesktop";
 const PIPE_ACCESS_DUPLEX: u32 = 0x00000003;
 
 const BUFFER_SIZE: u32 = 1024 * 1024;

@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/paths.rs
+// ~/opendesktop/od-backend/src/paths.rs
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -28,13 +28,13 @@ pub fn user_home_dir() -> Option<PathBuf> {
     }
 }
 
-/// The canonical Sentinel root is always `~/.Sentinel/`.
+/// The canonical OpenDesktop root is always `~/ProjectOpen/OpenDesktop/`.
 /// All config, addons, and assets live here.
 /// Result is cached after the first successful resolution.
-pub fn sentinel_root_dir() -> PathBuf {
+pub fn od_root_dir() -> PathBuf {
     CACHED_ROOT.get_or_init(|| {
         let root = if let Some(home) = user_home_dir() {
-            home.join(".Sentinel")
+            home.join("ProjectOpen").join("OpenDesktop")
         } else {
             warn!("Could not resolve home directory, falling back to exe parent");
             match std::env::current_exe() {
@@ -46,16 +46,7 @@ pub fn sentinel_root_dir() -> PathBuf {
                 }
             }
         };
-        info!("Sentinel root resolved: {}", root.display());
+        info!("OpenDesktop root resolved: {}", root.display());
         root
     }).clone()
-}
-
-/// Returns true if the currently running exe is inside the sentinel root (`~/.Sentinel/`).
-pub fn is_running_from_sentinel_root() -> bool {
-    let root = sentinel_root_dir();
-    match std::env::current_exe() {
-        Ok(exe) => exe.starts_with(&root),
-        Err(_) => false,
-    }
 }

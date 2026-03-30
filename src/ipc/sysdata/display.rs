@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/sysdata/display.rs
+// ~/opendesktop/od-backend/src/ipc/sysdata/display.rs
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};

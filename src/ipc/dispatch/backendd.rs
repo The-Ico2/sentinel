@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/dispatch/backendd.rs
+// ~/opendesktop/od-backend/src/ipc/dispatch/backendd.rs
 
 use serde_json::{json, Value};
 use crate::config;

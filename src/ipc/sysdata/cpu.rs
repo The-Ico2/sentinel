@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/sysdata/cpu.rs
+// ~/opendesktop/od-backend/src/ipc/sysdata/cpu.rs
 
 use serde_json::{json, Value};
 use std::cell::RefCell;

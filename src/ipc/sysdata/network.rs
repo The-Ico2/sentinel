@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/sysdata/network.rs
+// ~/opendesktop/od-backend/src/ipc/sysdata/network.rs
 
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::{Mutex, OnceLock}, time::Instant};

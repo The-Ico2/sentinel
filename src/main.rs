@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/main.rs
+// ~/opendesktop/od-backend/src/main.rs
 
 #![windows_subsystem = "windows"]
 
@@ -6,14 +6,16 @@ mod logging;
 mod cli;
 mod paths;
 mod ipc;
-mod systemtray;
+mod autostart;
 mod utils;
 mod config_ui;
 mod config;
+mod ui;
+pub mod installer;
 
 use crate::{
     cli::{run_cli, bootstrap_user_root},
-    systemtray::systray::{spawn_tray, start_configured_autostart_addons},
+    autostart::{start_configured_autostart_addons, ensure_user_config_dirs},
     ipc::{
         server::start_ipc_server,
         registry::registry_manager,
@@ -21,6 +23,7 @@ use crate::{
 };
 
 use std::path::PathBuf;
+use std::time::Duration;
 use windows::{
     core::PCWSTR,
     Win32::{
@@ -38,15 +41,15 @@ pub struct Addon {
     package: String,
 }
 
-pub struct SentinelDaemon {
+pub struct ODDaemon {
     // Core backend components
     // registry: (),
     // ipc: (),
 }
 
-impl SentinelDaemon {
+impl ODDaemon {
     pub fn new() -> Self {
-        info!("Initializing SentinelDaemon backend components");
+        info!("Initializing ODDaemon backend components");
         Self {
             // registry: (),
             // ipc: (),
@@ -54,7 +57,7 @@ impl SentinelDaemon {
     }
 
     pub fn run(&self) {
-        info!("Starting SentinelDaemon");
+        info!("Starting ODDaemon");
         info!("Loading backend config");
 
         let cfg = crate::config::load_config();
@@ -90,15 +93,20 @@ impl SentinelDaemon {
             start_configured_autostart_addons();
         });
 
-        // Start system tray
-        info!("Starting system tray");
-        spawn_tray();
-        info!("System tray initialized");
+        // Ensure user config directories exist
+        ensure_user_config_dirs();
+
+        // Block main thread — the daemon stays alive until the process is killed.
+        // The system tray is now managed by the OpenRender UI process.
+        info!("Daemon running (tray managed by UI process)");
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
     }
 }
 
 fn acquire_single_instance() -> Option<HANDLE> {
-    let mut name: Vec<u16> = "Global\\SentinelBackendSingleton"
+    let mut name: Vec<u16> = "Global\\OpenDesktopBackendSingleton"
         .encode_utf16()
         .collect();
     name.push(0);
@@ -125,13 +133,13 @@ fn main() {
     }
 
     // Run self-install/bootstrap before singleton acquisition so a relaunch
-    // from ~/.Sentinel/sentinelc.exe is not blocked by this process mutex.
+    // from ~/ProjectOpen/OpenDesktop/OpenDesktop.exe is not blocked by this process mutex.
     bootstrap_user_root();
 
     let args: Vec<String> = std::env::args().collect();
     let is_ui_mode = args
         .iter()
-        .any(|a| a == "--addon-config-ui" || a == "--sentinel-ui" || a == "--addon-webview");
+        .any(|a| a == "--addon-config-ui" || a == "--od-ui" || a == "--addon-webview");
 
     let instance_guard = if is_ui_mode {
         None
@@ -145,8 +153,8 @@ fn main() {
     };
 
     // Enable logging at startup
-    logging::init(true);
-    info!("Sentinel backend starting");
+    logging::init("OpenDesktop", "Core", true);
+    info!("OpenDesktop backend starting");
 
     if std::env::args().count() > 1 {
         info!("CLI mode detected");
@@ -161,10 +169,10 @@ fn main() {
         return;
     }
 
-    let daemon = SentinelDaemon::new();
+    let daemon = ODDaemon::new();
     daemon.run();
 
-    info!("Sentinel backend exiting");
+    info!("OpenDesktop backend exiting");
 
     if let Some(handle) = instance_guard {
         unsafe {

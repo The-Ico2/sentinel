@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/mod.rs
+// ~/opendesktop/od-backend/src/ipc/mod.rs
 
 pub mod server;
 pub mod request;

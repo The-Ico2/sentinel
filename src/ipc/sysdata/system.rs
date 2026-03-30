@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/sysdata/system.rs
+// ~/opendesktop/od-backend/src/ipc/sysdata/system.rs
 
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;

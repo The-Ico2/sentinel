@@ -1,0 +1,25 @@
+<div class="page-content">
+  <div class="page">
+    <div class="page-header">
+      <span class="page-header-label">Diagnostics</span>
+      <div class="page-header-row">
+        <h1>Live Data</h1>
+        <div class="actions-bar">
+          <button class="btn-secondary active" id="filter-all" data-action="ipc" data-ns="data" data-cmd="filter" data-args='{"filter":"all"}'>All</button>
+          <button class="btn-secondary" id="filter-hardware" data-action="ipc" data-ns="data" data-cmd="filter" data-args='{"filter":"hardware"}'>Hardware</button>
+          <button class="btn-secondary" id="filter-network" data-action="ipc" data-ns="data" data-cmd="filter" data-args='{"filter":"network"}'>Network</button>
+          <button class="btn-secondary" id="filter-system" data-action="ipc" data-ns="data" data-cmd="filter" data-args='{"filter":"system"}'>System</button>
+        </div>
+      </div>
+      <p class="subtitle">Real-time system data from the OpenDesktop registry</p>
+    </div>
+
+    <div class="data-panels" id="data-panels">
+      <div class="empty-state">
+        <div class="empty-state-icon">D</div>
+        <p>Connecting to backend...</p>
+        <p class="hint">Live data will appear once the OpenDesktop daemon is running</p>
+      </div>
+    </div>
+  </div>
+</div>

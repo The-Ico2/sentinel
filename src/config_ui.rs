@@ -293,13 +293,13 @@ impl UiCaches {
 }
 
 pub fn run_addon_config_ui(addon_ref: &str) -> Result<(), Box<dyn std::error::Error>> {
-    run_sentinel_ui(Some(addon_ref))
+    run_od_ui(Some(addon_ref))
 }
 
-pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_od_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let addon_catalog = discover_addon_configs();
     if addon_catalog.is_empty() {
-        warn!("No addon config.yaml files were discovered for Sentinel UI");
+        warn!("No addon config.yaml files were discovered for OpenDesktop UI");
     }
 
     for addon in &addon_catalog {
@@ -308,8 +308,8 @@ pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::err
 
     let custom_tab_addons = collect_custom_tab_shell_addons(&addon_catalog);
     if !custom_tab_addons.is_empty() {
-        info!("Launching Sentinel WebView shell for custom addon tabs");
-        return run_sentinel_custom_tabs_shell(custom_tab_addons, addon_focus);
+        info!("Launching OpenDesktop WebView shell for custom addon tabs");
+        return run_od_custom_tabs_shell(custom_tab_addons, addon_focus);
     }
 
     let mut selected = 0usize;
@@ -324,7 +324,7 @@ pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::err
 
     let addon_state = None;
 
-    let app = SentinelApp {
+    let app = ODApp {
         section: if addon_focus.is_some() {
             UiSection::Addons
         } else {
@@ -352,13 +352,13 @@ pub fn run_sentinel_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::err
         ..Default::default()
     };
 
-    eframe::run_native("Sentinel", options, Box::new(move |_cc| Ok(Box::new(app))))
-        .map_err(|e| format!("Failed to open Sentinel UI: {}", e))?;
+    eframe::run_native("OpenDesktop", options, Box::new(move |_cc| Ok(Box::new(app))))
+        .map_err(|e| format!("Failed to open OpenDesktop UI: {}", e))?;
 
     Ok(())
 }
 
-fn run_sentinel_custom_tabs_shell(
+fn run_od_custom_tabs_shell(
         addons: Vec<CustomTabShellAddon>,
         addon_focus: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -380,47 +380,47 @@ fn run_sentinel_custom_tabs_shell(
                 })
                 .unwrap_or_else(|| addons[0].id.clone());
 
-        let html = build_sentinel_custom_tabs_shell_html(&addons, &selected_addon_id)?;
-        let shell_path = sentinel_shell_html_path()?;
+        let html = build_od_custom_tabs_shell_html(&addons, &selected_addon_id)?;
+        let shell_path = od_shell_html_path()?;
         if let Some(parent) = shell_path.parent() {
                 std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&shell_path, html)?;
 
-        // Use sentinel:// custom protocol so shell + iframes are same-origin.
+        // Use od:// custom protocol so shell + iframes are same-origin.
         // This is critical: WebView2's WebMessageReceived only fires for
         // top-level frame messages, and file:// iframes silently drop
         // window.parent.postMessage due to opaque-origin restrictions.
-        // With sentinel:// → http://sentinel.localhost, both frames share
+        // With od:// → http://od.localhost, both frames share
         // the same origin, so the iframe can directly call
-        // window.parent.__sentinelBridgePost() to relay to Rust.
-        let sentinel_home = sentinel_home_dir()?;
-        let shell_url = file_path_to_sentinel_url(&shell_path, &sentinel_home)?;
-        info!("[ui] Launching Sentinel custom-tab shell at {}", shell_url);
+        // window.parent.__odBridgePost() to relay to Rust.
+        let od_home = od_home_dir()?;
+        let shell_url = file_path_to_od_url(&shell_path, &od_home)?;
+        info!("[ui] Launching OpenDesktop custom-tab shell at {}", shell_url);
 
         let event_loop = EventLoopBuilder::new().build();
         let window = WindowBuilder::new()
-                .with_title("Sentinel")
+                .with_title("OpenDesktop")
                 .build(&event_loop)
-                .map_err(|e| format!("Failed to create Sentinel shell window: {}", e))?;
+                .map_err(|e| format!("Failed to create OpenDesktop shell window: {}", e))?;
 
-        let protocol_root = sentinel_home.clone();
+        let protocol_root = od_home.clone();
         let ui_view_mode = Arc::new(Mutex::new("addon".to_string()));
         let ui_view_mode_ipc = Arc::clone(&ui_view_mode);
         let ui_renderer_mode = Arc::new(Mutex::new("webview2".to_string()));
         let ui_renderer_mode_ipc = Arc::clone(&ui_renderer_mode);
 
         let webview = WebViewBuilder::new()
-                .with_custom_protocol("sentinel".to_string(), move |_webview_id, request| {
+                .with_custom_protocol("opendesktop".to_string(), move |_webview_id, request| {
                     let uri = request.uri().to_string();
-                    // Extract path from sentinel://localhost/path or http://sentinel.localhost/path
+                    // Extract path from od://localhost/path or http://od.localhost/path
                     let raw_path = uri
-                        .strip_prefix("sentinel://localhost")
-                        .or_else(|| uri.strip_prefix("sentinel://"))
+                        .strip_prefix("od://localhost")
+                        .or_else(|| uri.strip_prefix("od://"))
                         .or_else(|| {
-                            // WebView2 workaround: http://sentinel.localhost/path
-                            uri.strip_prefix("http://sentinel.localhost")
-                                .or_else(|| uri.strip_prefix("https://sentinel.localhost"))
+                            // WebView2 workaround: http://od.localhost/path
+                            uri.strip_prefix("http://od.localhost")
+                                .or_else(|| uri.strip_prefix("https://od.localhost"))
                         })
                         .unwrap_or(&uri);
                     let path_part = raw_path.split('?').next().unwrap_or("");
@@ -450,9 +450,9 @@ fn run_sentinel_custom_tabs_shell(
                 .with_url(&shell_url)
                 .with_initialization_script(
                     // This runs in ALL frames (main + iframes) on WebView2.
-                    // Because we serve everything through sentinel:// custom
+                    // Because we serve everything through od:// custom
                     // protocol, the shell and iframes are same-origin.
-                    // Iframes can directly call window.parent.__sentinelBridgePost()
+                    // Iframes can directly call window.parent.__odBridgePost()
                     // to relay messages to Rust via the top-level frame's
                     // window.ipc.postMessage → WebMessageReceived handler.
                     r#"
@@ -461,7 +461,7 @@ fn run_sentinel_custom_tabs_shell(
                         try { isTopFrame = (window === window.top); } catch(e) { isTopFrame = false; }
 
                         if (isTopFrame) {
-                            window.__sentinelIPC = function(payload) {
+                            window.__odIPC = function(payload) {
                                 try {
                                     var msg = (typeof payload === 'string') ? payload : JSON.stringify(payload);
                                     if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {
@@ -477,11 +477,11 @@ fn run_sentinel_custom_tabs_shell(
                             };
                         } else {
                             // Same-origin: directly call parent's bridge function
-                            window.__sentinelIPC = function(payload) {
+                            window.__odIPC = function(payload) {
                                 try {
                                     var msg = (typeof payload === 'string') ? payload : JSON.stringify(payload);
-                                    if (window.parent && typeof window.parent.__sentinelBridgePost === 'function') {
-                                        return !!window.parent.__sentinelBridgePost(msg);
+                                    if (window.parent && typeof window.parent.__odBridgePost === 'function') {
+                                        return !!window.parent.__odBridgePost(msg);
                                     }
                                     // Fallback: direct top-level ipc if accessible
                                     if (window.parent && window.parent.ipc && typeof window.parent.ipc.postMessage === 'function') {
@@ -510,7 +510,7 @@ fn run_sentinel_custom_tabs_shell(
                         let addon_id = message
                             .addon_id
                             .clone()
-                            .unwrap_or_else(|| "sentinel.addon.wallpaper".to_string());
+                            .unwrap_or_else(|| "od.addon.wallpaper".to_string());
 
                         match message.kind.to_lowercase().as_str() {
                             "wallpaper_apply_assignment" => {
@@ -683,7 +683,7 @@ fn run_sentinel_custom_tabs_shell(
                     }
                 })
                 .build(&window)
-                .map_err(|e| format!("Failed to create Sentinel shell webview: {}", e))?;
+                .map_err(|e| format!("Failed to create OpenDesktop shell webview: {}", e))?;
 
         let mut last_monitor_poll = std::time::Instant::now();
         let mut cached_monitor_json = String::new();
@@ -692,15 +692,15 @@ fn run_sentinel_custom_tabs_shell(
         let mut last_registry_push = std::time::Instant::now();
         let mut last_config_push = std::time::Instant::now();
         let mut last_ui_heartbeat = std::time::Instant::now();
-        let snapshot_home = sentinel_home.clone();
+        let snapshot_home = od_home.clone();
 
         event_loop.run(move |event, _, control_flow| {
                 const UI_POLL_MS_ACTIVE_DATA_WEBVIEW: u64 = 80;
             const UI_POLL_MS_ACTIVE_ADDON_WEBVIEW: u64 = 900;
                 const UI_POLL_MS_IDLE_WEBVIEW: u64 = 750;
-                const UI_POLL_MS_ACTIVE_DATA_CANVASX: u64 = 125;
-            const UI_POLL_MS_ACTIVE_ADDON_CANVASX: u64 = 1200;
-                const UI_POLL_MS_IDLE_CANVASX: u64 = 950;
+                const UI_POLL_MS_ACTIVE_DATA_OPENRENDER: u64 = 125;
+            const UI_POLL_MS_ACTIVE_ADDON_OPENRENDER: u64 = 1200;
+                const UI_POLL_MS_IDLE_OPENRENDER: u64 = 950;
                 let current_view_mode = ui_view_mode
                     .lock()
                     .map(|mode| mode.clone())
@@ -709,13 +709,13 @@ fn run_sentinel_custom_tabs_shell(
                     .lock()
                     .map(|mode| mode.clone())
                     .unwrap_or_else(|_| "webview2".to_string());
-                let canvasx_renderer = current_renderer_mode == "canvasx";
+                let openrender_renderer = current_renderer_mode == "openrender";
                 let data_view_active = current_view_mode == "data";
                 let addon_view_active = current_view_mode == "addon";
                 let ui_poll_ms = if data_view_active {
-                    if canvasx_renderer { UI_POLL_MS_ACTIVE_DATA_CANVASX } else { UI_POLL_MS_ACTIVE_DATA_WEBVIEW }
+                    if openrender_renderer { UI_POLL_MS_ACTIVE_DATA_OPENRENDER } else { UI_POLL_MS_ACTIVE_DATA_WEBVIEW }
                 } else {
-                    if canvasx_renderer { UI_POLL_MS_IDLE_CANVASX } else { UI_POLL_MS_IDLE_WEBVIEW }
+                    if openrender_renderer { UI_POLL_MS_IDLE_OPENRENDER } else { UI_POLL_MS_IDLE_WEBVIEW }
                 };
 
                 *control_flow = ControlFlow::WaitUntil(
@@ -755,7 +755,7 @@ fn run_sentinel_custom_tabs_shell(
                         if json != cached_monitor_json {
                             cached_monitor_json = json.clone();
                             let _ = webview.evaluate_script(&format!(
-                                "if(typeof __sentinelPushMonitors==='function')__sentinelPushMonitors({});",
+                                "if(typeof __odPushMonitors==='function')__odPushMonitors({});",
                                 json
                             ));
                         }
@@ -774,7 +774,7 @@ fn run_sentinel_custom_tabs_shell(
                                 if cfg_json != cached_config_json {
                                     cached_config_json = cfg_json.clone();
                                     let _ = webview.evaluate_script(&format!(
-                                        "window.__sentinelConfig={};if(typeof __sentinelOnConfigPush==='function')__sentinelOnConfigPush(window.__sentinelConfig);",
+                                        "window.__odConfig={};if(typeof __odOnConfigPush==='function')__odOnConfigPush(window.__odConfig);",
                                         cfg_json
                                     ));
                                 }
@@ -789,9 +789,9 @@ fn run_sentinel_custom_tabs_shell(
                 // through the named-pipe IPC (registry/full) so we get the
                 // live in-memory state including __meta, addons, and assets.
                 let registry_poll_ms = if data_view_active {
-                    if canvasx_renderer { UI_POLL_MS_ACTIVE_DATA_CANVASX } else { UI_POLL_MS_ACTIVE_DATA_WEBVIEW }
+                    if openrender_renderer { UI_POLL_MS_ACTIVE_DATA_OPENRENDER } else { UI_POLL_MS_ACTIVE_DATA_WEBVIEW }
                 } else if addon_view_active {
-                    if canvasx_renderer { UI_POLL_MS_ACTIVE_ADDON_CANVASX } else { UI_POLL_MS_ACTIVE_ADDON_WEBVIEW }
+                    if openrender_renderer { UI_POLL_MS_ACTIVE_ADDON_OPENRENDER } else { UI_POLL_MS_ACTIVE_ADDON_WEBVIEW }
                 } else {
                     0
                 };
@@ -812,7 +812,7 @@ fn run_sentinel_custom_tabs_shell(
                                 if json_str != cached_registry_json {
                                     cached_registry_json = json_str.clone();
                                     let _ = webview.evaluate_script(&format!(
-                                        "if(typeof __sentinelPushRegistry==='function')__sentinelPushRegistry({});",
+                                        "if(typeof __odPushRegistry==='function')__odPushRegistry({});",
                                         json_str
                                     ));
                                 }
@@ -842,25 +842,25 @@ fn run_sentinel_custom_tabs_shell(
         });
 }
 
-fn sentinel_home_dir() -> Result<PathBuf, String> {
+fn od_home_dir() -> Result<PathBuf, String> {
         let home = std::env::var("USERPROFILE").map_err(|_| "USERPROFILE not set".to_string())?;
-        Ok(Path::new(&home).join(".Sentinel"))
+        Ok(Path::new(&home).join("ProjectOpen").join("OpenDesktop"))
 }
 
-fn sentinel_shell_html_path() -> Result<PathBuf, String> {
-        Ok(sentinel_home_dir()?
+fn od_shell_html_path() -> Result<PathBuf, String> {
+        Ok(od_home_dir()?
                 .join("cache")
-                .join("sentinel_custom_tabs_shell.html"))
+                .join("od_custom_tabs_shell.html"))
 }
 
-/// Convert a filesystem path under .Sentinel to a sentinel:// custom protocol URL.
-/// E.g. `C:\Users\Xande\.Sentinel\Addons\wallpaper\options\library.html`
-///    → `sentinel://localhost/Addons/wallpaper/options/library.html`
-fn file_path_to_sentinel_url(path: &Path, sentinel_home: &Path) -> Result<String, String> {
+/// Convert a filesystem path under ProjectOpen/OpenDesktop to a od:// custom protocol URL.
+/// E.g. `C:\Users\Xande\ProjectOpen\OpenDesktop\Addons\wallpaper\options\library.html`
+///    → `od://localhost/Addons/wallpaper/options/library.html`
+fn file_path_to_od_url(path: &Path, od_home: &Path) -> Result<String, String> {
         let canonical = std::fs::canonicalize(path)
                 .map_err(|e| format!("Failed to resolve path '{}': {}", path.display(), e))?;
-        let home_canonical = std::fs::canonicalize(sentinel_home)
-                .map_err(|e| format!("Failed to resolve home '{}': {}", sentinel_home.display(), e))?;
+        let home_canonical = std::fs::canonicalize(od_home)
+                .map_err(|e| format!("Failed to resolve home '{}': {}", od_home.display(), e))?;
 
         let mut canon_str = canonical.to_string_lossy().to_string();
         let mut home_str = home_canonical.to_string_lossy().to_string();
@@ -874,14 +874,14 @@ fn file_path_to_sentinel_url(path: &Path, sentinel_home: &Path) -> Result<String
 
         let relative = canon_str
                 .strip_prefix(&home_str)
-                .ok_or_else(|| format!("Path '{}' is not under sentinel home '{}'", canon_str, home_str))?
+                .ok_or_else(|| format!("Path '{}' is not under opendesktop home '{}'", canon_str, home_str))?
                 .trim_start_matches('\\');
 
         let url_path = relative.replace('\\', "/").replace(' ', "%20");
-        // WebView2 rewrites sentinel://localhost/ to http://sentinel.localhost/
+        // WebView2 rewrites od://localhost/ to http://od.localhost/
         // internally. URLs embedded in page content (iframe src, img src, etc.)
         // must use the rewritten http:// form to be navigable within the page.
-        Ok(format!("http://sentinel.localhost/{}", url_path))
+        Ok(format!("http://od.localhost/{}", url_path))
 }
 
 fn guess_mime_type(path: &Path) -> &'static str {
@@ -913,7 +913,7 @@ fn guess_mime_type(path: &Path) -> &'static str {
 }
 
 fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellAddon> {
-        let sentinel_home = match sentinel_home_dir() {
+        let od_home = match od_home_dir() {
                 Ok(h) => h,
                 Err(_) => return Vec::new(),
         };
@@ -924,13 +924,13 @@ fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellA
                         continue;
                 }
 
-        let wallpaper_payload = build_wallpaper_shell_data(addon, &sentinel_home);
+        let wallpaper_payload = build_wallpaper_shell_data(addon, &od_home);
 
                 let shell_tabs: Vec<CustomTabShellPage> = tabs
                         .into_iter()
                         .filter_map(|t| {
-                file_path_to_sentinel_url(&t.path, &sentinel_home).ok().map(|base_url| {
-                    let url = append_sentinel_data_query(&base_url, &addon.id, wallpaper_payload.as_ref());
+                file_path_to_od_url(&t.path, &od_home).ok().map(|base_url| {
+                    let url = append_od_data_query(&base_url, &addon.id, wallpaper_payload.as_ref());
                     CustomTabShellPage {
                                         id: t.id,
                                         title: t.title,
@@ -959,7 +959,7 @@ fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellA
         out
 }
 
-fn append_sentinel_data_query(
+fn append_od_data_query(
     base_url: &str,
     addon_id: &str,
     wallpaper: Option<&WallpaperShellData>,
@@ -971,10 +971,10 @@ fn append_sentinel_data_query(
     let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
     let encoded = urlencoding::encode(&payload_str);
     let sep = if base_url.contains('?') { "&" } else { "?" };
-    format!("{}{}sentinelData={}", base_url, sep, encoded)
+    format!("{}{}odData={}", base_url, sep, encoded)
 }
 
-fn build_wallpaper_shell_data(addon: &AddonMeta, sentinel_home: &Path) -> Option<WallpaperShellData> {
+fn build_wallpaper_shell_data(addon: &AddonMeta, od_home: &Path) -> Option<WallpaperShellData> {
     let is_wallpaper = addon.package.eq_ignore_ascii_case("wallpaper")
         || addon.id.to_lowercase().contains("wallpaper")
         || addon.name.to_lowercase().contains("wallpaper");
@@ -1026,13 +1026,13 @@ fn build_wallpaper_shell_data(addon: &AddonMeta, sentinel_home: &Path) -> Option
             let preview_url = asset
                 .preview_paths
                 .first()
-                .and_then(|p| file_path_to_sentinel_url(p, sentinel_home).ok());
+                .and_then(|p| file_path_to_od_url(p, od_home).ok());
 
             // Resolve the wallpaper's index.html URL
             let manifest_dir = asset.manifest_path.parent().unwrap_or(Path::new(""));
             let index_path = manifest_dir.join("index.html");
             let html_url = if index_path.exists() {
-                file_path_to_sentinel_url(&index_path, sentinel_home).ok()
+                file_path_to_od_url(&index_path, od_home).ok()
             } else {
                 None
             };
@@ -1784,7 +1784,7 @@ fn capture_wallpaper_preview(manifest_path_str: &str) -> Result<(), String> {
     }
 
     // Use wry's print_to_pdf-like approach or an offscreen capture.
-    // For now we mark that a new preview is needed by writing a sentinel timestamp
+    // For now we mark that a new preview is needed by writing a opendesktop timestamp
     // so the wallpaper addon's watcher knows to regenerate.
     let marker_path = preview_dir.join(".preview_capture_pending");
     let timestamp = std::time::SystemTime::now()
@@ -1798,7 +1798,7 @@ fn capture_wallpaper_preview(manifest_path_str: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn build_sentinel_custom_tabs_shell_html(
+fn build_od_custom_tabs_shell_html(
         addons: &[CustomTabShellAddon],
         selected_addon_id: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -1812,7 +1812,7 @@ fn build_sentinel_custom_tabs_shell_html(
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sentinel</title>
+    <title>OpenDesktop</title>
     <style>
         :root {{
             --bg-base: #0a0a0f;
@@ -2748,10 +2748,10 @@ fn build_sentinel_custom_tabs_shell_html(
         const DEFAULT_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>';
 
         const STORE_ADDONS = [
-            {{ id: 'sentinel-windowmanager', name: 'Window Manager', owner: 'The-Ico2', repo: 'sentinel-windowmanager' }},
-            {{ id: 'sentinel-wallpaper', name: 'Wallpaper', owner: 'The-Ico2', repo: 'sentinel-wallpaper' }},
-            {{ id: 'sentinel-statusbar', name: 'Status Bar', owner: 'The-Ico2', repo: 'sentinel-statusbar' }},
-            {{ id: 'sentinel', name: 'Sentinel Core', owner: 'The-Ico2', repo: 'Sentinel' }}
+            {{ id: 'od-windowmanager', name: 'Window Manager', owner: 'The-Ico2', repo: 'od-windowmanager' }},
+            {{ id: 'od-wallpaper', name: 'Wallpaper', owner: 'The-Ico2', repo: 'od-wallpaper' }},
+            {{ id: 'od-statusbar', name: 'Status Bar', owner: 'The-Ico2', repo: 'od-statusbar' }},
+            {{ id: 'opendesktop', name: 'OpenDesktop Core', owner: 'The-Ico2', repo: 'OpenDesktop' }}
         ];
 
         function escapeHtml(value) {{
@@ -2796,19 +2796,19 @@ fn build_sentinel_custom_tabs_shell_html(
                 .replace(/[^a-z0-9]/g, '');
         }}
 
-        function stripSentinelPrefix(value) {{
+        function stripODPrefix(value) {{
             return String(value == null ? '' : value)
                 .toLowerCase()
-                .replace(/^sentinel[-_.]?/i, '');
+                .replace(/^opendesktop[-_.]?/i, '');
         }}
 
         function addonTokensFromStore(addon) {{
-            const raw = [addon.id, addon.name, addon.repo, stripSentinelPrefix(addon.id), stripSentinelPrefix(addon.repo)];
+            const raw = [addon.id, addon.name, addon.repo, stripODPrefix(addon.id), stripODPrefix(addon.repo)];
             return new Set(raw.map(normalizeAddonToken).filter(Boolean));
         }}
 
         function addonTokensFromInstalled(addon) {{
-            const raw = [addon.id, addon.name, stripSentinelPrefix(addon.id), stripSentinelPrefix(addon.name)];
+            const raw = [addon.id, addon.name, stripODPrefix(addon.id), stripODPrefix(addon.name)];
             return new Set(raw.map(normalizeAddonToken).filter(Boolean));
         }}
 
@@ -2848,10 +2848,10 @@ fn build_sentinel_custom_tabs_shell_html(
 
         function openExternalUrl(url) {{
             if (!url) return;
-            window.__sentinelBridgePost({{ type: 'open_external_url', url: url }});
+            window.__odBridgePost({{ type: 'open_external_url', url: url }});
         }}
 
-        window.__sentinelBridgePost = (payload) => {{
+        window.__odBridgePost = (payload) => {{
             if (!payload) return false;
             var msg = (typeof payload === 'string') ? payload : JSON.stringify(payload);
             try {{
@@ -2877,13 +2877,13 @@ fn build_sentinel_custom_tabs_shell_html(
                 try {{ data = JSON.parse(data); }} catch (_) {{ return; }}
             }}
 
-            if (data && data.sentinelBridge && data.payload) {{
-                window.__sentinelBridgePost(data.payload);
+            if (data && data.opendesktopBridge && data.payload) {{
+                window.__odBridgePost(data.payload);
                 return;
             }}
 
             if (data && data.type) {{
-                window.__sentinelBridgePost(data);
+                window.__odBridgePost(data);
             }}
         }});
 
@@ -2969,7 +2969,7 @@ fn build_sentinel_custom_tabs_shell_html(
         }}
 
         function renderSettingsPage() {{
-            var cfg = window.__sentinelConfig || {{}};
+            var cfg = window.__odConfig || {{}};
             var fastRate = cfg.fast_pull_rate_ms || 50;
             var slowRate = cfg.slow_pull_rate_ms || 500;
             var rorChecked = cfg.refresh_on_request !== false;
@@ -3013,7 +3013,7 @@ fn build_sentinel_custom_tabs_shell_html(
                     '<div class="setting-row"><span class="s-label">Renderer</span>' +
                         '<select id="cfg-renderer" class="s-input">' +
                             '<option value="webview2" selected>WebView2</option>' +
-                            '<option value="canvasx">CanvasX (Adaptive Polling)</option>' +
+                            '<option value="openrender">OpenRender (Adaptive Polling)</option>' +
                         '</select>' +
                     '</div>' +
                 '</div>';
@@ -3028,40 +3028,40 @@ fn build_sentinel_custom_tabs_shell_html(
                 clearTimeout(fastTimer);
                 var v = Number(fastEl.value);
                 fastTimer = setTimeout(function() {{
-                    if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
-                    window.__sentinelConfig.fast_pull_rate_ms = v;
-                    window.__sentinelBridgePost({{ type: 'backend_setting', key: 'fast_pull_rate', value: v }});
+                    if (!window.__odConfig) window.__odConfig = {{}};
+                    window.__odConfig.fast_pull_rate_ms = v;
+                    window.__odBridgePost({{ type: 'backend_setting', key: 'fast_pull_rate', value: v }});
                 }}, 400);
             }});
             if (slowEl) slowEl.addEventListener('input', function() {{
                 clearTimeout(slowTimer);
                 var v = Number(slowEl.value);
                 slowTimer = setTimeout(function() {{
-                    if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
-                    window.__sentinelConfig.slow_pull_rate_ms = v;
-                    window.__sentinelBridgePost({{ type: 'backend_setting', key: 'slow_pull_rate', value: v }});
+                    if (!window.__odConfig) window.__odConfig = {{}};
+                    window.__odConfig.slow_pull_rate_ms = v;
+                    window.__odBridgePost({{ type: 'backend_setting', key: 'slow_pull_rate', value: v }});
                 }}, 400);
             }});
             if (rorEl) rorEl.addEventListener('change', function() {{
-                if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
-                window.__sentinelConfig.refresh_on_request = rorEl.checked;
-                window.__sentinelBridgePost({{ type: 'backend_setting', key: 'refresh_on_request', value: rorEl.checked }});
+                if (!window.__odConfig) window.__odConfig = {{}};
+                window.__odConfig.refresh_on_request = rorEl.checked;
+                window.__odBridgePost({{ type: 'backend_setting', key: 'refresh_on_request', value: rorEl.checked }});
             }});
             if (pauseEl) pauseEl.addEventListener('change', function() {{
-                if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
-                window.__sentinelConfig.data_pull_paused = pauseEl.checked;
-                window.__sentinelBridgePost({{ type: 'backend_setting', key: 'pull_paused', value: pauseEl.checked }});
+                if (!window.__odConfig) window.__odConfig = {{}};
+                window.__odConfig.data_pull_paused = pauseEl.checked;
+                window.__odBridgePost({{ type: 'backend_setting', key: 'pull_paused', value: pauseEl.checked }});
             }});
             if (rendererEl) rendererEl.addEventListener('change', function() {{
                 var mode = (rendererEl.value || 'webview2').toLowerCase();
-                window.__sentinelBridgePost({{ type: 'ui_renderer_mode', renderer_mode: mode }});
+                window.__odBridgePost({{ type: 'ui_renderer_mode', renderer_mode: mode }});
             }});
         }}
 
         async function renderStorePage() {{
             const header = document.getElementById('page-header');
             const content = document.getElementById('page-content');
-            header.innerHTML = '<h2>Addon Store</h2><p style="color:var(--text-dim);margin:4px 0 0;">Download Sentinel addons from GitHub releases</p>';
+            header.innerHTML = '<h2>Addon Store</h2><p style="color:var(--text-dim);margin:4px 0 0;">Download OpenDesktop addons from GitHub releases</p>';
 
             const token = Date.now() + ':' + Math.random().toString(36).slice(2);
             window.__storeRenderToken = token;
@@ -3128,7 +3128,7 @@ fn build_sentinel_custom_tabs_shell_html(
             header.innerHTML = '<h2>Updater</h2><p style="color:var(--text-dim);margin:4px 0 0;">Compare installed versions with latest GitHub releases</p>';
 
             const targets = STORE_ADDONS.map(function(addon) {{
-                const current = addon.id === 'sentinel'
+                const current = addon.id === 'opendesktop'
                     ? BACKEND_CURRENT_VERSION
                     : resolveInstalledVersionForStoreAddon(addon);
                 return {{ addon: addon, current: current }};
@@ -3191,8 +3191,8 @@ fn build_sentinel_custom_tabs_shell_html(
             }});
         }}
 
-        window.__sentinelOnConfigPush = function(cfg) {{
-            window.__sentinelConfig = cfg || {{}};
+        window.__odOnConfigPush = function(cfg) {{
+            window.__odConfig = cfg || {{}};
 
             if (viewMode === 'settings') {{
                 var fastEl = document.getElementById('cfg-fast-rate');
@@ -3200,10 +3200,10 @@ fn build_sentinel_custom_tabs_shell_html(
                 var rorEl = document.getElementById('cfg-refresh-on-req');
                 var pauseEl = document.getElementById('cfg-pull-paused');
 
-                var nextFast = Number((window.__sentinelConfig && window.__sentinelConfig.fast_pull_rate_ms) || 50);
-                var nextSlow = Number((window.__sentinelConfig && window.__sentinelConfig.slow_pull_rate_ms) || 500);
-                var nextRor = !!(window.__sentinelConfig && window.__sentinelConfig.refresh_on_request !== false);
-                var nextPaused = !!(window.__sentinelConfig && window.__sentinelConfig.data_pull_paused === true);
+                var nextFast = Number((window.__odConfig && window.__odConfig.fast_pull_rate_ms) || 50);
+                var nextSlow = Number((window.__odConfig && window.__odConfig.slow_pull_rate_ms) || 500);
+                var nextRor = !!(window.__odConfig && window.__odConfig.refresh_on_request !== false);
+                var nextPaused = !!(window.__odConfig && window.__odConfig.data_pull_paused === true);
 
                 if (fastEl && Number(fastEl.value) !== nextFast) fastEl.value = String(nextFast);
                 if (slowEl && Number(slowEl.value) !== nextSlow) slowEl.value = String(nextSlow);
@@ -3213,7 +3213,7 @@ fn build_sentinel_custom_tabs_shell_html(
 
             if (viewMode === 'data') {{
                 var uiExceptionEl = document.getElementById('cfg-ui-data-exception');
-                var nextUiException = !!(window.__sentinelConfig && window.__sentinelConfig.ui_data_exception_enabled !== false);
+                var nextUiException = !!(window.__odConfig && window.__odConfig.ui_data_exception_enabled !== false);
                 if (uiExceptionEl && uiExceptionEl.checked !== nextUiException) uiExceptionEl.checked = nextUiException;
             }}
         }};
@@ -3221,18 +3221,18 @@ fn build_sentinel_custom_tabs_shell_html(
         function renderDataPage() {{
             const header = document.getElementById('page-header');
             const content = document.getElementById('page-content');
-            var dataPollRate = (window.__sentinelConfig && window.__sentinelConfig.fast_pull_rate_ms) || 80;
+            var dataPollRate = (window.__odConfig && window.__odConfig.fast_pull_rate_ms) || 80;
             header.innerHTML = '<h2>Data</h2><p style="color:var(--text-dim);margin:4px 0 0;"><span class="data-connection-dot live"></span>Live registry via IPC — fast tier ' + dataPollRate + 'ms</p>';
-            var uiDataExceptionEnabled = !!(window.__sentinelConfig && window.__sentinelConfig.ui_data_exception_enabled !== false);
+            var uiDataExceptionEnabled = !!(window.__odConfig && window.__odConfig.ui_data_exception_enabled !== false);
             var chips = ['All','Hardware','Network','Input','System','App','JSON'];
             window.__dataActiveChip = window.__dataActiveChip || 'All';
             content.innerHTML =
                 '<div class="page-settings-group" style="padding:12px 14px;margin-bottom:12px;">' +
                     '<div class="setting-row" style="padding:4px 0;border-bottom:none;">' +
-                        '<span class="s-label">Sentinel UI Data Exception</span>' +
+                        '<span class="s-label">OpenDesktop UI Data Exception</span>' +
                         '<label class="s-toggle"><input type="checkbox" id="cfg-ui-data-exception"' + (uiDataExceptionEnabled ? ' checked' : '') + '><span class="s-slider"></span></label>' +
                     '</div>' +
-                    '<p style="color:var(--text-dim);font-size:12px;margin:4px 0 0;">When enabled, opening Sentinel UI keeps all data updates active via UI heartbeat.</p>' +
+                    '<p style="color:var(--text-dim);font-size:12px;margin:4px 0 0;">When enabled, opening OpenDesktop UI keeps all data updates active via UI heartbeat.</p>' +
                 '</div>' +
                 '<div class="data-filter">' +
                     chips.map(function(c) {{ return '<button class="data-filter-chip' + (c === window.__dataActiveChip ? ' active' : '') + '">' + c + '</button>'; }}).join('') +
@@ -3242,9 +3242,9 @@ fn build_sentinel_custom_tabs_shell_html(
 
             var uiExceptionEl = document.getElementById('cfg-ui-data-exception');
             if (uiExceptionEl) uiExceptionEl.addEventListener('change', function() {{
-                if (!window.__sentinelConfig) window.__sentinelConfig = {{}};
-                window.__sentinelConfig.ui_data_exception_enabled = uiExceptionEl.checked;
-                window.__sentinelBridgePost({{ type: 'backend_setting', key: 'ui_data_exception_enabled', value: uiExceptionEl.checked }});
+                if (!window.__odConfig) window.__odConfig = {{}};
+                window.__odConfig.ui_data_exception_enabled = uiExceptionEl.checked;
+                window.__odBridgePost({{ type: 'backend_setting', key: 'ui_data_exception_enabled', value: uiExceptionEl.checked }});
             }});
 
             content.querySelectorAll('.data-filter-chip').forEach(function(chip) {{
@@ -4247,15 +4247,15 @@ fn build_sentinel_custom_tabs_shell_html(
             container.innerHTML = html || '<div style="color:var(--text-dim);padding:20px;">No data for this filter</div>';
         }}
 
-        window.__sentinelPushMonitors = function(monitors) {{
+        window.__odPushMonitors = function(monitors) {{
             var frame = document.getElementById('tabFrame');
             if (frame && frame.contentWindow) {{
-                frame.contentWindow.postMessage({{ type: '__sentinel_monitors', monitors: monitors }}, '*');
+                frame.contentWindow.postMessage({{ type: '__od_monitors', monitors: monitors }}, '*');
             }}
         }};
 
         // Live registry data push from Rust event loop
-        window.__sentinelPushRegistry = function(data) {{
+        window.__odPushRegistry = function(data) {{
             window.__lastRegistryData = data;
             // Only update if the Data page is currently active
             if (viewMode === 'data') {{
@@ -4314,7 +4314,7 @@ fn build_sentinel_custom_tabs_shell_html(
                 }} else if (viewMode === 'store') renderStorePage();
                 else if (viewMode === 'updater') renderUpdaterPage();
             }}
-            window.__sentinelBridgePost({{ type: 'ui_view_mode', viewMode: viewMode }});
+            window.__odBridgePost({{ type: 'ui_view_mode', viewMode: viewMode }});
         }}
 
         render();
@@ -4325,7 +4325,7 @@ fn build_sentinel_custom_tabs_shell_html(
         ))
 }
 
-struct SentinelApp {
+struct ODApp {
     section: UiSection,
     addon_catalog: Vec<AddonMeta>,
     selected_addon_idx: usize,
@@ -4345,7 +4345,7 @@ struct SentinelApp {
     settings_loaded: bool,
 }
 
-impl SentinelApp {
+impl ODApp {
     fn load_selected_addon(&mut self) {
         if self.addon_catalog.is_empty() {
             self.addon_state = None;
@@ -4364,7 +4364,7 @@ impl SentinelApp {
                 };
                 self.editor_selected_asset = state.assets.first().map(|a| a.id.clone());
                 self.library_selected_monitor = None;
-                self.selected_custom_tab = state.custom_tabs.first().map(|t| t.id.clone());
+                self.selected_custom_tab = Some("settings".to_string());
                 self.last_opened_custom_tab = None;
                 self.addon_state = Some(state);
                 self.global_status = "Loaded addon config".to_string();
@@ -4381,7 +4381,7 @@ impl SentinelApp {
             .resizable(false)
             .default_width(220.0)
             .show(ctx, |ui| {
-                ui.heading("Sentinel");
+                ui.heading("OpenDesktop");
                 ui.label(RichText::new("Native control center").color(Color32::GRAY));
                 ui.add_space(8.0);
                 ui.separator();
@@ -4440,7 +4440,7 @@ impl SentinelApp {
         }
 
         Self::section_card(ui, "Backend Settings", |ui| {
-            ui.label("Control the Sentinel backend data engine.");
+            ui.label("Control the OpenDesktop backend data engine.");
             ui.add_space(10.0);
 
             // ── Fast-tier pull rate slider ──
@@ -4598,7 +4598,7 @@ impl SentinelApp {
     fn show_addons(&mut self, ui: &mut egui::Ui) {
         Self::section_card(ui, "Addon Hub", |ui| {
             if self.addon_catalog.is_empty() {
-                ui.label("No addons found in ~/.Sentinel/Addons.");
+                ui.label("No addons found in ~/ProjectOpen/OpenDesktop/Addons.");
                 return;
             }
 
@@ -4637,7 +4637,7 @@ impl SentinelApp {
                 let before_render = serde_yaml::to_string(&state.root).ok();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    if !state.custom_tabs.is_empty() {
+                    if !state.custom_tabs.is_empty() && self.selected_custom_tab.as_deref() != Some("settings") {
                         render_selected_custom_tab(
                             ui,
                             &state.meta,
@@ -4835,14 +4835,24 @@ impl SentinelApp {
     }
 
     fn render_settings_tab(&mut self, ui: &mut egui::Ui, state: &mut AddonConfigState) {
-        if render_addon_custom_tab_page(ui, &state.meta, "settings") {
-            return;
-        }
-
         let mut open_library_requested = false;
         if let Some(schema) = &state.schema {
             if !schema.ui.sections.is_empty() {
+                let has_settings_sections = schema.ui.sections.iter().any(|section| {
+                    let section_path = section.path.as_deref().unwrap_or_default();
+                    section_path.eq_ignore_ascii_case("settings")
+                        || section_path.to_ascii_lowercase().starts_with("settings.")
+                });
+
                 for section in &schema.ui.sections {
+                    let section_path = section.path.as_deref().unwrap_or_default();
+                    if has_settings_sections
+                        && !section_path.eq_ignore_ascii_case("settings")
+                        && !section_path.to_ascii_lowercase().starts_with("settings.")
+                    {
+                        continue;
+                    }
+
                     render_schema_section(
                         ui,
                         &mut state.root,
@@ -4868,7 +4878,7 @@ impl SentinelApp {
     }
 }
 
-impl App for SentinelApp {
+impl App for ODApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.sidebar(ctx);
         egui::CentralPanel::default().show(ctx, |ui| match self.section {
@@ -5838,7 +5848,7 @@ pub fn run_standalone_webview(path: &str, title: Option<&str>) -> Result<(), Box
     }
 
     let url = file_path_to_url(&page_path)?;
-    let window_title = title.unwrap_or("Sentinel").to_string();
+    let window_title = title.unwrap_or("OpenDesktop").to_string();
     info!(
         "[ui] Launching standalone addon webview: title='{}', page='{}'",
         window_title,
@@ -5849,12 +5859,12 @@ pub fn run_standalone_webview(path: &str, title: Option<&str>) -> Result<(), Box
     let window = WindowBuilder::new()
         .with_title(window_title)
         .build(&event_loop)
-        .map_err(|e| format!("Failed to create Sentinel addon webview window: {}", e))?;
+        .map_err(|e| format!("Failed to create OpenDesktop addon webview window: {}", e))?;
 
     let webview = WebViewBuilder::new()
         .with_url(&url)
         .build(&window)
-        .map_err(|e| format!("Failed to create Sentinel addon webview: {}", e))?;
+        .map_err(|e| format!("Failed to create OpenDesktop addon webview: {}", e))?;
 
     event_loop.run(move |event, _, control_flow| {
         let _keep_alive = &webview;
@@ -5869,13 +5879,13 @@ pub fn run_standalone_webview(path: &str, title: Option<&str>) -> Result<(), Box
     });
 }
 
-fn open_in_sentinel_webview(path: &Path, title: String) -> Result<(), String> {
+fn open_in_od_webview(path: &Path, title: String) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Tab page not found: {}", path.display()));
     }
 
     let exe = std::env::current_exe()
-        .map_err(|e| format!("Failed to resolve Sentinel executable: {}", e))?;
+        .map_err(|e| format!("Failed to resolve OpenDesktop executable: {}", e))?;
 
     info!(
         "[ui] Spawning addon webview process: title='{}', page='{}'",
@@ -5889,7 +5899,7 @@ fn open_in_sentinel_webview(path: &Path, title: String) -> Result<(), String> {
         .arg("--addon-webview-title")
         .arg(title)
         .spawn()
-        .map_err(|e| format!("Failed to spawn Sentinel webview process: {}", e))?;
+        .map_err(|e| format!("Failed to spawn OpenDesktop webview process: {}", e))?;
 
     Ok(())
 }
@@ -5944,6 +5954,11 @@ fn discover_custom_tabs(meta: &AddonMeta) -> Vec<CustomTabPage> {
             _ => continue,
         };
 
+        // Settings is always schema-driven from config.yaml + schema.yaml.
+        if stem == "settings" {
+            continue;
+        }
+
         tabs.push(CustomTabPage {
             id: stem.clone(),
             title: pretty_label(&stem),
@@ -5956,7 +5971,6 @@ fn discover_custom_tabs(meta: &AddonMeta) -> Vec<CustomTabPage> {
             "library" => 0,
             "editor" => 1,
             "discover" => 2,
-            "settings" => 3,
             _ => 100,
         }
     }
@@ -5971,15 +5985,16 @@ fn discover_custom_tabs(meta: &AddonMeta) -> Vec<CustomTabPage> {
 }
 
 fn render_custom_hub_tabs(ui: &mut egui::Ui, tabs: &[CustomTabPage], selected: &mut Option<String>) {
-    if tabs.is_empty() {
-        return;
-    }
-
     if selected.is_none() {
-        *selected = Some(tabs[0].id.clone());
+        *selected = Some("settings".to_string());
     }
 
     ui.horizontal_wrapped(|ui| {
+        let settings_selected = selected.as_ref().map(|v| v == "settings").unwrap_or(false);
+        if ui.selectable_label(settings_selected, "Settings").clicked() {
+            *selected = Some("settings".to_string());
+        }
+
         for tab in tabs {
             let is_selected = selected.as_ref().map(|v| v == &tab.id).unwrap_or(false);
             if ui.selectable_label(is_selected, &tab.title).clicked() {
@@ -6013,11 +6028,11 @@ fn render_selected_custom_tab(
     let tab = tabs.iter().find(|t| t.id == selected_id).unwrap_or(&tabs[0]);
     let tab_key = format!("{}:{}", meta.id, tab.id);
     if last_opened.as_ref() != Some(&tab_key) {
-        let title = format!("Sentinel • {} • {}", meta.name, tab.title);
-        match open_in_sentinel_webview(&tab.path, title) {
+        let title = format!("OpenDesktop • {} • {}", meta.name, tab.title);
+        match open_in_od_webview(&tab.path, title) {
             Ok(_) => {
                 *last_opened = Some(tab_key);
-                *global_status = format!("Opened {} in Sentinel WebView", tab.title);
+                *global_status = format!("Opened {} in OpenDesktop WebView", tab.title);
             }
             Err(e) => {
                 *global_status = e;
@@ -6028,7 +6043,7 @@ fn render_selected_custom_tab(
     ui.label(RichText::new(format!("Addon-designed {} page", tab.title)).strong());
     ui.label(RichText::new(tab.path.display().to_string()).small().color(Color32::GRAY));
     ui.add_space(6.0);
-    ui.label(RichText::new("This tab is rendered by the addon HTML in a Sentinel WebView window.").small().color(Color32::LIGHT_BLUE));
+    ui.label(RichText::new("This tab is rendered by the addon HTML in a OpenDesktop WebView window.").small().color(Color32::LIGHT_BLUE));
     if ui.button("Reopen tab page").clicked() {
         *last_opened = None;
     }
@@ -6127,7 +6142,7 @@ fn discover_addon_configs() -> Vec<AddonMeta> {
         Err(_) => return result,
     };
 
-    let addons_root = PathBuf::from(home).join(".Sentinel").join("Addons");
+    let addons_root = PathBuf::from(home).join("ProjectOpen").join("OpenDesktop").join("Addons");
     let entries = match std::fs::read_dir(&addons_root) {
         Ok(v) => v,
         Err(_) => return result,
@@ -6246,7 +6261,7 @@ fn discover_assets_for_category(category: &str) -> Vec<AssetOption> {
         Err(_) => return result,
     };
 
-    let assets_root = PathBuf::from(home).join(".Sentinel").join("Assets");
+    let assets_root = PathBuf::from(home).join("ProjectOpen").join("OpenDesktop").join("Assets");
     let category_root = match find_category_dir_case_insensitive(&assets_root, category) {
         Some(p) => p,
         None => return result,

@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/registry.rs
+// ~/opendesktop/od-backend/src/ipc/registry.rs
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,7 +12,7 @@ use std::{
 
 use crate::{
     info, warn, error,
-    paths::sentinel_root_dir,
+    paths::od_root_dir,
 };
 use crate::ipc::data_updater::{demand_tracking_active, section_tracking_enabled};
 
@@ -277,7 +277,7 @@ pub fn merge_sysdata_tier(existing: &[RegistryEntry], fresh: Vec<RegistryEntry>,
 //
 
 pub fn registry_manager() {
-    let root = sentinel_root_dir();
+    let root = od_root_dir();
     info!("Initializing registry at '{}'", root.display());
 
     // Quick initial build — discover addons & assets only.
@@ -311,7 +311,7 @@ pub fn registry_manager() {
 pub fn registry_watcher() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting registry watcher");
     let (tx, rx) = channel();
-    let root = sentinel_root_dir();
+    let root = od_root_dir();
     let addons_root = root.join("Addons");
     let assets_root = root.join("Assets");
 

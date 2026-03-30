@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/addon/mod.rs
+// ~/opendesktop/od-backend/src/ipc/addon/mod.rs
 
 pub mod utils;
 pub mod start;

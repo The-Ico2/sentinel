@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/sysdata/bluetooth.rs
+// ~/opendesktop/od-backend/src/ipc/sysdata/bluetooth.rs
 
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;

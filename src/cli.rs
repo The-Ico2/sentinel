@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/cli.rs
+// ~/opendesktop/od-backend/src/cli.rs
 // Responsible for managing CLI commands and adding commands from Addons
 
 use clap::{ArgAction, Parser, ValueEnum};
@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     io::{self},
 };
-use crate::paths::{user_home_dir, sentinel_root_dir, is_running_from_sentinel_root};
+use crate::paths::user_home_dir;
 use crate::{info, warn, error};
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -26,7 +26,7 @@ struct FoundItem {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Sentinel unified CLI")]
+#[command(author, version, about = "OpenDesktop unified CLI")]
 struct Cli {
     #[arg(long = "app", action = ArgAction::SetTrue)]
     app_mode: bool,
@@ -139,7 +139,7 @@ fn resolve_content_dirs(cli: &Cli) -> Vec<PathBuf> {
         }
     }
     if let Some(home) = user_home_dir() {
-        let default_root = home.join(".Sentinel");
+        let default_root = home.join("ProjectOpen").join("OpenDesktop");
         info!("Adding default content-dir: {}", default_root.display());
         roots.push(default_root);
     }
@@ -186,81 +186,24 @@ pub fn bootstrap_user_root() {
     info!("=== Bootstrap starting ===");
     info!("Current exe: {:?}", std::env::current_exe());
 
-    let sentinel = sentinel_root_dir();
+    let config = crate::installer::InstallerConfig::core("OpenDesktop")
+        .exe_name("OpenDesktop.exe")
+        .subdirs(&["Addons", "Assets"]);
 
-    // Create the directory structure
-    let _ = fs::create_dir_all(&sentinel);
-    let _ = fs::create_dir_all(sentinel.join("Addons"));
-    let _ = fs::create_dir_all(sentinel.join("Assets"));
-    info!("Bootstrapped user root at {}", sentinel.display());
-
-    // If already running from ~/.Sentinel/, nothing else to do
-    if is_running_from_sentinel_root() {
-        info!("Already running from sentinel root, skipping self-install");
-        return;
+    fn log_fn(level: crate::installer::LogLevel, msg: &str) {
+        match level {
+            crate::installer::LogLevel::Info  => crate::info!("{}", msg),
+            crate::installer::LogLevel::Warn  => crate::warn!("{}", msg),
+            crate::installer::LogLevel::Error => crate::error!("{}", msg),
+        }
     }
 
-    // ----- Self-install: copy exe into ~/.Sentinel/ and relaunch -----
-    let current_exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => { warn!("Cannot determine current exe path: {e}"); return; }
-    };
-
-    let exe_name = current_exe.file_name().unwrap_or_default().to_string_lossy();
-    let dst = sentinel.join("sentinel-core.exe");
-
-    info!("Source: {}", current_exe.display());
-    info!("Target: {}", dst.display());
-
-    // Only copy if the source is newer or different size
-    let should_copy = match (fs::metadata(&current_exe), fs::metadata(&dst)) {
-        (Ok(src_meta), Ok(dst_meta)) => {
-            let src_size = src_meta.len();
-            let dst_size = dst_meta.len();
-            let src_newer = src_meta.modified().ok().zip(dst_meta.modified().ok())
-                .map(|(s, d)| s > d)
-                .unwrap_or(false);
-            info!("Source size={src_size}, Target size={dst_size}, source_newer={src_newer}");
-            src_newer || src_size != dst_size
-        }
-        (Ok(src_meta), Err(_)) => {
-            info!("Target does not exist, source size={}", src_meta.len());
-            true
-        }
-        _ => {
-            warn!("Cannot read source exe metadata");
-            false
-        }
-    };
-
-    if should_copy {
-        info!("Copying exe to sentinel root...");
-        match fs::copy(&current_exe, &dst) {
-            Ok(bytes) => info!("Installed {} ({bytes} bytes) -> {}", exe_name, dst.display()),
-            Err(e) => {
-                warn!("Failed to copy exe to sentinel root: {e}");
-                return;
-            }
-        }
-    } else {
-        info!("Installed exe is already up to date");
-    }
-
-    // Relaunch from the installed location with the same arguments
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    info!("Relaunching from {} with args: {:?}", dst.display(), args);
-    match std::process::Command::new(&dst).args(&args).spawn() {
-        Ok(_) => {
-            info!("Relaunch successful, exiting current process");
-            std::process::exit(0);
-        }
-        Err(e) => warn!("Failed to relaunch from installed location: {e}"),
-    }
+    crate::installer::bootstrap(&config, log_fn);
 }
 
 fn route_to_addon_executable(first_arg: &str) -> Option<(PathBuf, Vec<String>)> {
     if let Some(home) = user_home_dir() {
-        let addons_root = home.join(".Sentinel").join("Addons");
+        let addons_root = home.join("ProjectOpen").join("OpenDesktop").join("Addons");
         if !addons_root.is_dir() { return None; }
 
         let mut candidates: Vec<(String, PathBuf)> = Vec::new();
@@ -327,9 +270,9 @@ pub fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     bootstrap_user_root();
 
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--sentinel-ui") {
-        info!("Launching Sentinel UI shell");
-        crate::config_ui::run_sentinel_ui(None)?;
+    if args.iter().any(|a| a == "--od-ui") {
+        info!("Launching OpenDesktop UI (OpenRender)");
+        crate::ui::launch()?;
         return Ok(());
     }
 
@@ -338,6 +281,7 @@ pub fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             .get(flag_index + 1)
             .ok_or("Missing addon id/name after --addon-config-ui")?;
         info!("Launching addon config UI for '{}'", addon_ref);
+        // Fall back to legacy config_ui for addon-specific config
         crate::config_ui::run_addon_config_ui(addon_ref)?;
         return Ok(());
     }

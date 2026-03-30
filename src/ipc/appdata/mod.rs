@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/appdata/mod.rs
+// ~/opendesktop/od-backend/src/ipc/appdata/mod.rs
 
 pub mod window;
 pub mod notifications;

@@ -1,4 +1,4 @@
-// ~/sentinel/sentinel-backend/src/ipc/sysdata/gpu.rs
+// ~/opendesktop/od-backend/src/ipc/sysdata/gpu.rs
 
 use serde_json::{json, Value};
 use std::{
