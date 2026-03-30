@@ -217,6 +217,9 @@ impl OpenDesktopApp {
                     "var dv=document.getElementById('addon-detail-view');",
                     "if(lv)lv.style.display='';",
                     "if(dv)dv.style.display='none';",
+                    "var tc=document.getElementById('addon-tab-content');if(tc)tc.innerHTML='';",
+                    "var tb=document.getElementById('addon-tab-bar');if(tb)tb.innerHTML='';",
+                    "var da=document.getElementById('addon-detail-actions');if(da)da.innerHTML='';",
                 ));
             }
             ("addons", "switch-tab") => {
@@ -296,6 +299,7 @@ impl OpenDesktopApp {
         }
 
         let mut cards = String::new();
+        let mut nav_items = String::new();
         let mut count = 0u32;
         if let Ok(entries) = std::fs::read_dir(&addons_dir) {
             for entry in entries.flatten() {
@@ -310,7 +314,6 @@ impl OpenDesktopApp {
 
                 let icon_char = name.chars().next().unwrap_or('A');
                 // The entire card is clickable — navigates to the addon detail view.
-                // Start/Stop/Reload are small buttons in the card footer.
                 cards.push_str(&format!(
                     concat!(
                         "<div class=\"addon-card\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"view\" data-args='{{\"addon_name\":\"{name_esc}\"}}'>",
@@ -321,14 +324,21 @@ impl OpenDesktopApp {
                               "<span class=\"addon-version\">{ver}{opts}</span>",
                             "</div>",
                           "</div>",
-                          "<span class=\"addon-card-arrow\">&rsaquo;</span>",
+                          "<span class=\"addon-card-arrow\">\u{203A}</span>",
                         "</div>",
                     ),
                     icon = Self::escape_html(&icon_char.to_string()),
                     name = Self::escape_html(&name),
                     ver = Self::escape_html(version_hint),
                     name_esc = Self::escape_js(&name),
-                    opts = if has_options { " · has options" } else { "" },
+                    opts = if has_options { " \u{00B7} has options" } else { "" },
+                ));
+
+                // Sidebar nav item for this addon
+                nav_items.push_str(&format!(
+                    "<div class=\"nav-item\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"view\" data-args='{{\"addon_name\":\"{name_esc}\"}}' data-navigate=\"addons\"><span class=\"nav-text\">{name}</span></div>",
+                    name = Self::escape_html(&name),
+                    name_esc = Self::escape_js(&name),
                 ));
                 count += 1;
             }
@@ -339,9 +349,11 @@ impl OpenDesktopApp {
                 "var ag=document.getElementById('addon-grid');",
                 "if(ag)ag.innerHTML='{cards}';",
                 "var ac=document.getElementById('addon-count');if(ac)ac.textContent='{n}';",
+                "var nm=document.getElementById('nav-menu');if(nm)nm.innerHTML='{nav}';",
             ),
             cards = Self::escape_js(&cards),
             n = count,
+            nav = Self::escape_js(&nav_items),
         );
         self.host.execute_js(&js);
     }
@@ -409,9 +421,9 @@ impl OpenDesktopApp {
         // Build action buttons (start/stop/reload)
         let actions_html = format!(
             concat!(
-                "<button class=\"btn-secondary btn-sm\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"start\" data-args='{{\"addon_name\":\"{n}\"}}'>Start</button>",
-                "<button class=\"btn-secondary btn-sm\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"stop\" data-args='{{\"addon_name\":\"{n}\"}}'>Stop</button>",
-                "<button class=\"btn-secondary btn-sm\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"reload\" data-args='{{\"addon_name\":\"{n}\"}}'>Reload</button>",
+                "<button class=\"btn-secondary btn-sm\" title=\"Start\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"start\" data-args='{{\"addon_name\":\"{n}\"}}'>▶</button>",
+                "<button class=\"btn-secondary btn-sm\" title=\"Stop\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"stop\" data-args='{{\"addon_name\":\"{n}\"}}'>■</button>",
+                "<button class=\"btn-secondary btn-sm\" title=\"Reload\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"reload\" data-args='{{\"addon_name\":\"{n}\"}}'>↻</button>",
             ),
             n = name_esc,
         );
@@ -1057,6 +1069,22 @@ impl OpenDesktopApp {
                 }
                 AppEvent::ContentSwapped { content_id } => {
                     log::info!("Content swapped to: {content_id}");
+                    // Update sidebar active states
+                    let cid_esc = Self::escape_js(&content_id);
+                    self.host.execute_js(&format!(
+                        concat!(
+                            "var btns=document.querySelectorAll('.bottom-btn');",
+                            "btns.forEach(function(b){{",
+                              "var nav=b.getAttribute('data-navigate')||'';",
+                              "b.className=nav==='{cid}'?'bottom-btn active':'bottom-btn';",
+                            "}});",
+                            "var navItems=document.querySelectorAll('#nav-menu .nav-item');",
+                            "navItems.forEach(function(n){{",
+                              "n.className='nav-item';",
+                            "}});",
+                        ),
+                        cid = cid_esc,
+                    ));
                     match content_id.as_str() {
                         "home" => {
                             self.push_monitor_data();
