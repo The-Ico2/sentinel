@@ -18,7 +18,8 @@
             <span class="setting-label">Fast Pull Rate (ms)</span>
             <span class="setting-description">Interval for high-priority data sources</span>
           </div>
-          <span class="setting-value" id="setting-fast-rate">50</span>
+          <input type="number" class="setting-input" id="setting-fast-rate" value="50" min="10" max="5000" step="10"
+            data-action="ipc" data-ns="settings" data-cmd="set-fast-rate" />
         </div>
 
         <div class="setting-row">
@@ -26,7 +27,8 @@
             <span class="setting-label">Slow Pull Rate (ms)</span>
             <span class="setting-description">Interval for low-priority data sources</span>
           </div>
-          <span class="setting-value" id="setting-slow-rate">500</span>
+          <input type="number" class="setting-input" id="setting-slow-rate" value="500" min="100" max="30000" step="50"
+            data-action="ipc" data-ns="settings" data-cmd="set-slow-rate" />
         </div>
 
         <div class="setting-row">
@@ -83,3 +85,16 @@
     </div>
   </div>
 </div>
+
+<script>
+function __odOnConfigPush(cfg) {
+  var fr = document.getElementById('setting-fast-rate');
+  if (fr && cfg.fast_pull_rate_ms != null) fr.value = cfg.fast_pull_rate_ms;
+  var sr = document.getElementById('setting-slow-rate');
+  if (sr && cfg.slow_pull_rate_ms != null) sr.value = cfg.slow_pull_rate_ms;
+  var pb = document.getElementById('setting-pause-btn');
+  if (pb) pb.textContent = cfg.data_pull_paused ? 'Resume' : 'Pause';
+  var rb = document.getElementById('setting-refresh-btn');
+  if (rb) rb.textContent = cfg.refresh_on_request ? 'Enabled' : 'Disabled';
+}
+</script>

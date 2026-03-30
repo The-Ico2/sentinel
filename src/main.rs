@@ -96,6 +96,23 @@ impl ODDaemon {
         // Ensure user config directories exist
         ensure_user_config_dirs();
 
+        // Auto-launch the OpenRender UI process (owns the system tray).
+        // The UI starts hidden — the tray icon appears immediately and the
+        // user can double-click it to show the window.
+        info!("Launching OpenDesktop UI process (tray host)");
+        match std::env::current_exe() {
+            Ok(exe) => {
+                match std::process::Command::new(&exe)
+                    .arg("--od-ui")
+                    .spawn()
+                {
+                    Ok(child) => info!("UI process started (PID {})", child.id()),
+                    Err(e) => error!("Failed to start UI process: {}", e),
+                }
+            }
+            Err(e) => error!("Failed to resolve executable for UI launch: {}", e),
+        }
+
         // Block main thread — the daemon stays alive until the process is killed.
         // The system tray is now managed by the OpenRender UI process.
         info!("Daemon running (tray managed by UI process)");

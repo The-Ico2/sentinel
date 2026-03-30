@@ -88,6 +88,7 @@ pub fn init(app_name: &str, segment: &str, debug: bool) {
 
 /// Returns true if debug-level logging is active.
 #[inline]
+#[allow(dead_code)]
 pub fn enabled() -> bool {
     DEBUG_ENABLED.load(Ordering::Relaxed)
 }
@@ -102,6 +103,7 @@ pub fn should_log(level: &str) -> bool {
 }
 
 /// Set debug mode at runtime.
+#[allow(dead_code)]
 pub fn set_debug(debug: bool) {
     DEBUG_ENABLED.store(debug, Ordering::Relaxed);
     let max_level = if debug { LevelFilter::Debug } else { LevelFilter::Warn };

@@ -188,6 +188,52 @@ impl OpenDesktopApp {
             // ── Addons ────────────────────────────────────────────────
             ("addons", "refresh") => self.ipc_addons_refresh(),
             ("addons", "open-folder") => self.ipc_open_od_folder("Addons"),
+            ("addons", "start") | ("addons", "stop") | ("addons", "reload") => {
+                let addon_name = args.as_ref()
+                    .and_then(|a| a.get("addon_name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if addon_name.is_empty() {
+                    return;
+                }
+                self.tray_addon_ipc("addons", cmd, &addon_name);
+                // Refresh addon list after action
+                self.ipc_addons_refresh();
+            }
+            ("addons", "configure") | ("addons", "view") => {
+                let addon_name = args.as_ref()
+                    .and_then(|a| a.get("addon_name").or_else(|| a.get("addon_id")))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !addon_name.is_empty() {
+                    self.ipc_addon_view(&addon_name);
+                }
+            }
+            ("addons", "back") => {
+                self.host.execute_js(concat!(
+                    "var lv=document.getElementById('addon-list-view');",
+                    "var dv=document.getElementById('addon-detail-view');",
+                    "if(lv)lv.style.display='';",
+                    "if(dv)dv.style.display='none';",
+                ));
+            }
+            ("addons", "switch-tab") => {
+                let tab = args.as_ref()
+                    .and_then(|a| a.get("tab"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let addon_name = args.as_ref()
+                    .and_then(|a| a.get("addon_name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !tab.is_empty() && !addon_name.is_empty() {
+                    self.ipc_addon_switch_tab(&addon_name, &tab);
+                }
+            }
 
             // ── Data ──────────────────────────────────────────────────
             ("data", "filter") => {
@@ -200,6 +246,16 @@ impl OpenDesktopApp {
             // ── Settings ──────────────────────────────────────────────
             ("settings", "toggle-pause") => self.ipc_backend_setting("pull_paused", None),
             ("settings", "toggle-refresh") => self.ipc_backend_setting("refresh_on_request", None),
+            ("settings", "set-fast-rate") => {
+                if let Some(val) = args.as_ref().and_then(|a| a.get("value")).and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok()) {
+                    self.ipc_backend_setting("fast_pull_rate_ms", Some(serde_json::json!(val)));
+                }
+            }
+            ("settings", "set-slow-rate") => {
+                if let Some(val) = args.as_ref().and_then(|a| a.get("value")).and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok()) {
+                    self.ipc_backend_setting("slow_pull_rate_ms", Some(serde_json::json!(val)));
+                }
+            }
 
             // ── Store ─────────────────────────────────────────────────
             ("store", "refresh") => {
@@ -227,7 +283,6 @@ impl OpenDesktopApp {
     // -----------------------------------------------------------------------
 
     fn ipc_addons_refresh(&mut self) {
-        // Discover installed addons from the OD home directory.
         let od_home = match od_home_dir() {
             Some(d) => d,
             None => return,
@@ -251,23 +306,29 @@ impl OpenDesktopApp {
                 let config_path = entry.path().join("config.yaml");
                 let has_config = config_path.exists();
                 let version_hint = if has_config { "configured" } else { "no config" };
+                let has_options = entry.path().join("options").exists();
 
                 let icon_char = name.chars().next().unwrap_or('A');
+                // The entire card is clickable — navigates to the addon detail view.
+                // Start/Stop/Reload are small buttons in the card footer.
                 cards.push_str(&format!(
                     concat!(
-                        "<div class=\"addon-card\">",
+                        "<div class=\"addon-card\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"view\" data-args='{{\"addon_name\":\"{name_esc}\"}}'>",
                           "<div class=\"addon-meta\">",
                             "<div class=\"addon-icon\">{icon}</div>",
                             "<div class=\"addon-info\">",
                               "<span class=\"addon-name\">{name}</span>",
-                              "<span class=\"addon-version\">{ver}</span>",
+                              "<span class=\"addon-version\">{ver}{opts}</span>",
                             "</div>",
                           "</div>",
+                          "<span class=\"addon-card-arrow\">&rsaquo;</span>",
                         "</div>",
                     ),
                     icon = Self::escape_html(&icon_char.to_string()),
                     name = Self::escape_html(&name),
                     ver = Self::escape_html(version_hint),
+                    name_esc = Self::escape_js(&name),
+                    opts = if has_options { " · has options" } else { "" },
                 ));
                 count += 1;
             }
@@ -278,7 +339,6 @@ impl OpenDesktopApp {
                 "var ag=document.getElementById('addon-grid');",
                 "if(ag)ag.innerHTML='{cards}';",
                 "var ac=document.getElementById('addon-count');if(ac)ac.textContent='{n}';",
-                "if(typeof showToast==='function')showToast('Found {n} addon(s)','success');",
             ),
             cards = Self::escape_js(&cards),
             n = count,
@@ -286,13 +346,261 @@ impl OpenDesktopApp {
         self.host.execute_js(&js);
     }
 
+    /// Open the detail view for a specific addon, showing its option tabs.
+    fn ipc_addon_view(&mut self, addon_name: &str) {
+        let od_home = match od_home_dir() {
+            Some(d) => d,
+            None => return,
+        };
+        let addon_dir = od_home.join("Addons").join(addon_name);
+        if !addon_dir.exists() {
+            self.host.execute_js(
+                &format!("if(typeof showToast==='function')showToast('Addon folder not found: {}','warning');",
+                    Self::escape_js(addon_name)),
+            );
+            return;
+        }
+
+        // Discover HTML tab pages in options/
+        let options_dir = addon_dir.join("options");
+        let mut tabs: Vec<(String, String)> = Vec::new(); // (tab_name, filename)
+        if options_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&options_dir) {
+                for entry in entries.flatten() {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    if fname.ends_with(".html") {
+                        let tab_name = fname.trim_end_matches(".html").to_string();
+                        tabs.push((tab_name, fname));
+                    }
+                }
+            }
+        }
+        // Sort: library first, settings last, others alphabetical
+        tabs.sort_by(|a, b| {
+            fn rank(name: &str) -> u8 {
+                match name {
+                    "library" => 0,
+                    "editor" => 1,
+                    "discover" => 2,
+                    "settings" => 200,
+                    _ => 100,
+                }
+            }
+            rank(&a.0).cmp(&rank(&b.0)).then_with(|| a.0.cmp(&b.0))
+        });
+
+        // If no HTML tabs, add a default "overview" placeholder
+        if tabs.is_empty() {
+            tabs.push(("overview".to_string(), String::new()));
+        }
+
+        // Build tab bar HTML
+        let mut tab_bar_html = String::new();
+        let name_esc = Self::escape_js(addon_name);
+        for (i, (tab_name, _)) in tabs.iter().enumerate() {
+            let active = if i == 0 { " active" } else { "" };
+            let label = Self::escape_html(&capitalize(tab_name));
+            tab_bar_html.push_str(&format!(
+                "<button class=\"addon-tab{active}\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"switch-tab\" data-args='{{\"addon_name\":\"{name_esc}\",\"tab\":\"{tab}\"}}'>{label}</button>",
+                tab = Self::escape_js(tab_name),
+            ));
+        }
+
+        // Build action buttons (start/stop/reload)
+        let actions_html = format!(
+            concat!(
+                "<button class=\"btn-secondary btn-sm\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"start\" data-args='{{\"addon_name\":\"{n}\"}}'>Start</button>",
+                "<button class=\"btn-secondary btn-sm\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"stop\" data-args='{{\"addon_name\":\"{n}\"}}'>Stop</button>",
+                "<button class=\"btn-secondary btn-sm\" data-action=\"ipc\" data-ns=\"addons\" data-cmd=\"reload\" data-args='{{\"addon_name\":\"{n}\"}}'>Reload</button>",
+            ),
+            n = name_esc,
+        );
+
+        // Show detail view, hide list view, set title + tab bar + actions
+        let js = format!(
+            concat!(
+                "var lv=document.getElementById('addon-list-view');",
+                "var dv=document.getElementById('addon-detail-view');",
+                "if(lv)lv.style.display='none';",
+                "if(dv)dv.style.display='';",
+                "var dn=document.getElementById('addon-detail-name');if(dn)dn.textContent='{name}';",
+                "var da=document.getElementById('addon-detail-actions');if(da)da.innerHTML='{actions}';",
+                "var tb=document.getElementById('addon-tab-bar');if(tb)tb.innerHTML='{tabs}';",
+            ),
+            name = Self::escape_js(addon_name),
+            actions = Self::escape_js(&actions_html),
+            tabs = Self::escape_js(&tab_bar_html),
+        );
+        self.host.execute_js(&js);
+
+        // Load the first tab's content
+        let first_tab = &tabs[0].0;
+        self.ipc_addon_switch_tab(addon_name, first_tab);
+    }
+
+    /// Switch to a specific tab within the addon detail view.
+    fn ipc_addon_switch_tab(&mut self, addon_name: &str, tab: &str) {
+        let od_home = match od_home_dir() {
+            Some(d) => d,
+            None => return,
+        };
+        let addon_dir = od_home.join("Addons").join(addon_name);
+        let options_dir = addon_dir.join("options");
+
+        // Update active tab styling
+        let tab_esc = Self::escape_js(tab);
+        self.host.execute_js(&format!(
+            concat!(
+                "var tabs=document.querySelectorAll('#addon-tab-bar .addon-tab');",
+                "tabs.forEach(function(t){{",
+                  "var a=t.getAttribute('data-args')||'';",
+                  "t.className=a.indexOf('\"tab\":\"{tab}\"')>=0?'addon-tab active':'addon-tab';",
+                "}});",
+            ),
+            tab = tab_esc,
+        ));
+
+        // Build tab content
+        let tab_file = options_dir.join(format!("{tab}.html"));
+        let content_html;
+
+        if tab_file.exists() {
+            // Read the addon's HTML file — extract only <body> inner content
+            let raw = std::fs::read_to_string(&tab_file).unwrap_or_default();
+            let body_content = extract_body_content(&raw);
+
+            // Read shared CSS + JS if present
+            let css = std::fs::read_to_string(options_dir.join("options.css")).unwrap_or_default();
+            let js_src = std::fs::read_to_string(options_dir.join("options.js")).unwrap_or_default();
+
+            // Build the odData payload that the options.js expects
+            let od_data = self.build_addon_od_data(addon_name, &addon_dir);
+            let od_data_json = serde_json::to_string(&od_data).unwrap_or_else(|_| "{}".to_string());
+
+            content_html = format!(
+                "<style>{css}</style><div class=\"addon-options-frame\">{body}</div><script>var odData={od_data};var wallpaperData=odData.wallpaper||{{}};var wallpapers=Array.isArray(wallpaperData.assets)?wallpaperData.assets:[];var monitors=Array.isArray(wallpaperData.monitors)?wallpaperData.monitors:[];var profiles=Array.isArray(wallpaperData.profiles)?wallpaperData.profiles:[];var addonId=odData.addonId||'';var hostedByOD=true;{js}</script>",
+                css = css,
+                body = body_content,
+                od_data = od_data_json,
+                js = js_src,
+            );
+        } else {
+            // No HTML tab — show schema-driven overview or placeholder
+            content_html = self.build_addon_overview_html(addon_name, &addon_dir);
+        }
+
+        let js = format!(
+            "var tc=document.getElementById('addon-tab-content');if(tc)tc.innerHTML='{html}';",
+            html = Self::escape_js(&content_html),
+        );
+        self.host.execute_js(&js);
+    }
+
+    /// Build the odData JSON payload that addon options.js scripts expect.
+    fn build_addon_od_data(&self, addon_name: &str, addon_dir: &std::path::Path) -> serde_json::Value {
+        // Read addon.json
+        let addon_json: serde_json::Value = std::fs::read_to_string(addon_dir.join("addon.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+
+        let addon_id = addon_json.get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or(addon_name);
+
+        // Read config.yaml
+        let config: serde_json::Value = std::fs::read_to_string(addon_dir.join("config.yaml"))
+            .ok()
+            .and_then(|t| serde_yaml::from_str(&t).ok())
+            .unwrap_or_default();
+
+        // Read schema.yaml
+        let schema: serde_json::Value = std::fs::read_to_string(addon_dir.join("schema.yaml"))
+            .ok()
+            .and_then(|t| serde_yaml::from_str(&t).ok())
+            .unwrap_or_default();
+
+        // Build wallpaper-specific data if applicable
+        let od_home = od_home_dir().unwrap_or_default();
+        let wallpaper_assets_dir = od_home.join("Assets").join("wallpaper");
+        let mut assets: Vec<serde_json::Value> = Vec::new();
+        if wallpaper_assets_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&wallpaper_assets_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() || p.extension().map(|e| e == "html" || e == "js" || e == "css").unwrap_or(false) {
+                        assets.push(serde_json::json!({
+                            "name": entry.file_name().to_string_lossy(),
+                            "path": p.to_string_lossy(),
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Monitor info from cached state
+        let monitors: Vec<serde_json::Value> = MonitorManager::enumerate_monitors()
+            .into_iter()
+            .map(|m| serde_json::json!({
+                "id": m.id,
+                "x": m.x, "y": m.y,
+                "width": m.width, "height": m.height,
+                "scale": m.scale, "primary": m.primary,
+            }))
+            .collect();
+
+        serde_json::json!({
+            "addonId": addon_id,
+            "hosted": true,
+            "config": config,
+            "schema": schema,
+            "wallpaper": {
+                "assets": assets,
+                "monitors": monitors,
+                "assignments": config.get("assignments").cloned().unwrap_or(serde_json::Value::Object(Default::default())),
+                "profiles": config.get("profiles").cloned().unwrap_or(serde_json::json!([])),
+            },
+        })
+    }
+
+    /// Build a generic overview page for addons without custom HTML options.
+    fn build_addon_overview_html(&self, addon_name: &str, addon_dir: &std::path::Path) -> String {
+        let addon_json: serde_json::Value = std::fs::read_to_string(addon_dir.join("addon.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+
+        let id = addon_json.get("id").and_then(|v| v.as_str()).unwrap_or(addon_name);
+        let version = addon_json.get("version").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let pkg = addon_json.get("package").and_then(|v| v.as_str()).unwrap_or(addon_name);
+        let has_config = addon_dir.join("config.yaml").exists();
+
+        format!(
+            concat!(
+                "<div class=\"addon-overview\">",
+                  "<div class=\"overview-section\">",
+                    "<h2>Info</h2>",
+                    "<div class=\"overview-grid\">",
+                      "<span class=\"overview-label\">ID</span><span class=\"overview-value\">{id}</span>",
+                      "<span class=\"overview-label\">Package</span><span class=\"overview-value\">{pkg}</span>",
+                      "<span class=\"overview-label\">Version</span><span class=\"overview-value\">{ver}</span>",
+                      "<span class=\"overview-label\">Config</span><span class=\"overview-value\">{cfg}</span>",
+                    "</div>",
+                  "</div>",
+                "</div>",
+            ),
+            id = Self::escape_html(id),
+            pkg = Self::escape_html(pkg),
+            ver = Self::escape_html(version),
+            cfg = if has_config { "config.yaml found" } else { "none" },
+        )
+    }
+
     // -----------------------------------------------------------------------
     // Backend settings
     // -----------------------------------------------------------------------
 
     fn ipc_backend_setting(&mut self, key: &str, value: Option<serde_json::Value>) {
-        // For toggle commands, we don't know the current state, so we
-        // just send the command and let the daemon handle it.
         let (cmd, args) = match key {
             "pull_paused" => {
                 let val = value.and_then(|v| v.as_bool()).unwrap_or(true);
@@ -301,6 +609,14 @@ impl OpenDesktopApp {
             "refresh_on_request" => {
                 let val = value.and_then(|v| v.as_bool()).unwrap_or(true);
                 ("set_refresh_on_request", serde_json::json!({"enabled": val}))
+            }
+            "fast_pull_rate_ms" => {
+                let val = value.and_then(|v| v.as_u64()).unwrap_or(50);
+                ("set_fast_pull_rate", serde_json::json!({"rate_ms": val}))
+            }
+            "slow_pull_rate_ms" => {
+                let val = value.and_then(|v| v.as_u64()).unwrap_or(1000);
+                ("set_slow_pull_rate", serde_json::json!({"rate_ms": val}))
             }
             _ => {
                 log::warn!("Unknown backend setting: {key}");
@@ -1000,6 +1316,27 @@ fn od_home_dir() -> Option<std::path::PathBuf> {
     dirs_next::home_dir().map(|h| h.join("ProjectOpen").join("OpenDesktop"))
 }
 
+/// Extract the inner HTML of <body>…</body> or return the whole string if no body tag.
+fn extract_body_content(html: &str) -> String {
+    let lower = html.to_lowercase();
+    let start = lower.find("<body")
+        .and_then(|i| html[i..].find('>').map(|j| i + j + 1));
+    let end = lower.rfind("</body>");
+    match (start, end) {
+        (Some(s), Some(e)) if s < e => html[s..e].to_string(),
+        _ => html.to_string(),
+    }
+}
+
+/// Capitalize the first letter of a string.
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(first) => first.to_uppercase().to_string() + c.as_str(),
+        None => String::new(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // winit ApplicationHandler
 // ---------------------------------------------------------------------------
@@ -1020,6 +1357,7 @@ impl ApplicationHandler for OpenDesktopApp {
             .with_title("OpenDesktop")
             .with_inner_size(PhysicalSize::new(1280u32, 800u32))
             .with_decorations(!self.host.has_custom_title_bar)
+            .with_visible(false) // Start hidden — tray double-click shows window
             .with_window_icon(window_icon);
 
         let window = match event_loop.create_window(attrs) {

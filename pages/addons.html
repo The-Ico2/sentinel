@@ -1,5 +1,6 @@
 <div class="page-content">
-  <div class="page">
+  <!-- ═══ List View (addon cards) ═══ -->
+  <div class="page" id="addon-list-view">
     <div class="page-header">
       <span class="page-header-label">Installed</span>
       <div class="page-header-row">
@@ -12,6 +13,10 @@
       <p class="subtitle">Manage installed addon packages and their configuration</p>
     </div>
 
+    <div class="addon-count-row">
+      <span class="addon-count-label"><span id="addon-count">0</span> addon(s) installed</span>
+    </div>
+
     <div class="addon-grid" id="addon-grid">
       <div class="empty-state">
         <div class="empty-state-icon">A</div>
@@ -19,5 +24,18 @@
         <p class="hint">Addons are discovered from ~/ProjectOpen/OpenDesktop/Addons/</p>
       </div>
     </div>
+  </div>
+
+  <!-- ═══ Detail View (addon options, hidden by default) ═══ -->
+  <div class="page" id="addon-detail-view" style="display:none;">
+    <div class="addon-detail-header">
+      <button class="btn-secondary addon-back-btn" id="addon-back-btn" data-action="ipc" data-ns="addons" data-cmd="back">&larr; Back</button>
+      <div class="addon-detail-title">
+        <h1 id="addon-detail-name">Addon</h1>
+        <div class="addon-detail-actions" id="addon-detail-actions"></div>
+      </div>
+    </div>
+    <div class="addon-tab-bar" id="addon-tab-bar"></div>
+    <div class="addon-tab-content" id="addon-tab-content"></div>
   </div>
 </div>
