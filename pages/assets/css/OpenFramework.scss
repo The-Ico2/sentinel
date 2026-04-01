@@ -1,0 +1,484 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  OpenFramework — Layout & Component System
+//  Inspired by Windows 11 / Fluent Design System (WinUI 3)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//  Token-based layout via classes:
+//    Position :  .left | .right | .top | .bottom
+//    Alignment:  .start | .center | .end
+//    Direction:  .vertical | .horizontal
+//
+//  Usage:
+//    <div class="bar left center vertical">
+//      <div class="nav start">…</div>
+//      <div class="nav center vertical">…</div>
+//      <div class="nav end horizontal">…</div>
+//    </div>
+
+// ── Fluent Design Tokens ─────────────────────────────────────────────────
+:root {
+  // Material
+  --of-mica:             rgba(32, 32, 32, 0.70);
+  --of-mica-fallback:    #202020;
+  --of-acrylic:          rgba(44, 44, 44, 0.65);
+  --of-acrylic-border:   rgba(255, 255, 255, 0.0578);
+
+  // Surfaces
+  --of-surface:          rgba(40, 40, 40, 0.60);
+  --of-surface-hover:    rgba(255, 255, 255, 0.0837);
+  --of-surface-active:   rgba(255, 255, 255, 0.0326);
+  --of-surface-selected: rgba(255, 255, 255, 0.0605);
+  --of-surface-stroke:   rgba(255, 255, 255, 0.0698);
+  --of-divider:          rgba(255, 255, 255, 0.0837);
+
+  // Text
+  --of-text-primary:     rgba(255, 255, 255, 0.8956);
+  --of-text-secondary:   rgba(255, 255, 255, 0.6047);
+  --of-text-tertiary:    rgba(255, 255, 255, 0.4419);
+  --of-text-disabled:    rgba(255, 255, 255, 0.2791);
+
+  // Accent (SystemAccentColor — blue tint like Win11 default)
+  --of-accent:           #60cdff;
+  --of-accent-hover:     #78d4ff;
+  --of-accent-active:    #4cc2ff;
+  --of-accent-subtle:    rgba(96, 205, 255, 0.10);
+  --of-accent-selected:  rgba(96, 205, 255, 0.15);
+
+  // Selection indicator
+  --of-indicator:        var(--accent, var(--of-accent));
+  --of-indicator-glow:   rgba(96, 205, 255, 0.30);
+
+  // Elevation
+  --of-shadow-flyout:    0 8px 32px rgba(0, 0, 0, 0.37);
+  --of-shadow-tooltip:   0 4px 12px rgba(0, 0, 0, 0.28);
+  --of-shadow-subtle:    0 2px 8px rgba(0, 0, 0, 0.15);
+
+  // Motion (Fluent timing)
+  --of-duration-fast:    167ms;
+  --of-duration-normal:  250ms;
+  --of-duration-slow:    367ms;
+  --of-ease-decelerate:  cubic-bezier(0, 0, 0, 1);
+  --of-ease-accelerate:  cubic-bezier(1, 0, 1, 1);
+  --of-ease-standard:    cubic-bezier(0.8, 0, 0.2, 1);
+
+  // Shape (Fluent corner radius)
+  --of-corner-sm:        4px;
+  --of-corner-md:        6px;
+  --of-corner-lg:        8px;
+  --of-corner-xl:        12px;
+
+  // Spacing
+  --of-space-xs:         2px;
+  --of-space-sm:         4px;
+  --of-space-md:         8px;
+  --of-space-lg:         12px;
+  --of-space-xl:         16px;
+  --of-space-xxl:        24px;
+
+  // Bar sizing
+  --of-bar-width:        48px;       // Collapsed nav rail width
+  --of-bar-width-wide:   180px;      // Expanded nav rail width
+  --of-bar-height:       40px;       // Horizontal bar height
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+//  BAR — Edge-pinned container (taskbar / navigation rail / panel)
+// ═════════════════════════════════════════════════════════════════════════
+
+.bar {
+  position: absolute;
+  display: flex;
+  z-index: 50;
+  justify-content: space-between;
+
+  // Acrylic material background
+  background: var(--of-acrylic);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--of-acrylic-border);
+
+  // ── Position: which viewport edge ─────────────────────────────────
+  &.left {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    flex-direction: column;
+    width: var(--of-bar-width);
+    border-top: none;
+    border-bottom: none;
+    border-left: none;
+  }
+
+  &.right {
+    top: 0;
+    bottom: 0;
+    right: 0;
+    flex-direction: column;
+    width: var(--of-bar-width);
+    border-top: none;
+    border-bottom: none;
+    border-right: none;
+  }
+
+  &.top {
+    top: 0;
+    left: 0;
+    right: 0;
+    flex-direction: row;
+    height: var(--of-bar-height);
+    border-top: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  &.bottom {
+    bottom: 0;
+    left: 0;
+    right: 0;
+    flex-direction: row;
+    height: var(--of-bar-height);
+    border-bottom: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  // ── Direction override ────────────────────────────────────────────
+  &.vertical {
+    flex-direction: column;
+  }
+
+  &.horizontal {
+    flex-direction: row;
+  }
+
+  // ── Alignment on main axis ────────────────────────────────────────
+  &.start {
+    justify-content: flex-start;
+  }
+
+  &.center {
+    justify-content: center;
+  }
+
+  &.end {
+    justify-content: flex-end;
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+//  NAV — Navigation section within a bar
+// ═════════════════════════════════════════════════════════════════════════
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--of-space-sm);
+  padding: var(--of-space-sm);
+
+  // ── Position in parent bar ────────────────────────────────────────
+  &.start {
+    justify-content: flex-start;
+  }
+
+  &.center {
+    flex: 1;
+    justify-content: center;
+  }
+
+  &.end {
+    justify-content: flex-end;
+  }
+
+  // ── Direction ─────────────────────────────────────────────────────
+  &.vertical {
+    flex-direction: column;
+  }
+
+  &.horizontal {
+    flex-direction: row;
+  }
+
+  // ── Logo slot ─────────────────────────────────────────────────────
+  &.logo {
+    padding: var(--of-space-lg) var(--of-space-md);
+    justify-content: center;
+    color: var(--of-indicator);
+    flex-shrink: 0;
+
+    svg {
+      filter: drop-shadow(0 0 6px var(--of-indicator-glow));
+      transition: transform var(--of-duration-normal) var(--of-ease-decelerate);
+    }
+
+    &:hover svg {
+      transform: scale(1.08);
+    }
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+//  NAV ITEM — Individual navigation button (WinUI NavigationViewItem)
+// ═════════════════════════════════════════════════════════════════════════
+
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--of-corner-lg);
+  background: transparent;
+  color: var(--of-text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--of-duration-fast) var(--of-ease-decelerate),
+    color var(--of-duration-fast) var(--of-ease-decelerate),
+    transform var(--of-duration-fast) var(--of-ease-decelerate);
+  outline: none;
+  -webkit-user-select: none;
+  user-select: none;
+
+  svg {
+    flex-shrink: 0;
+    pointer-events: none;
+  }
+
+  // ── Hover: subtle fill (Fluent rest → hover) ──────────────────────
+  &:hover {
+    background: var(--of-surface-hover);
+    color: var(--of-text-primary);
+  }
+
+  // ── Active: pressed state ─────────────────────────────────────────
+  &:active {
+    background: var(--of-surface-active);
+    color: var(--of-text-secondary);
+    transform: scale(0.94);
+  }
+
+  // ── Focus visible (keyboard) ──────────────────────────────────────
+  &:focus-visible {
+    outline: 2px solid var(--of-accent);
+    outline-offset: 2px;
+  }
+
+  // ── Active / selected state ───────────────────────────────────────
+  &.active {
+    background: var(--of-accent-subtle);
+    color: var(--of-text-primary);
+
+    // WinUI selection indicator pill — left edge for vertical bars
+    &::before {
+      content: "";
+      position: absolute;
+      left: -8px;
+      width: 3px;
+      height: 16px;
+      border-radius: 1.5px;
+      background: var(--of-indicator);
+      box-shadow: 0 0 8px var(--of-indicator-glow);
+      transition:
+        height var(--of-duration-normal) var(--of-ease-decelerate),
+        opacity var(--of-duration-normal) var(--of-ease-decelerate);
+    }
+  }
+}
+
+// Horizontal bar → indicator on bottom edge instead
+.bar.horizontal,
+.bar.top,
+.bar.bottom {
+  .nav-item.active::before {
+    left: auto;
+    top: auto;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 16px;
+    height: 3px;
+    border-radius: 1.5px;
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+//  QUICK ACTIONS — Compact icon button row (e.g. bottom of sidebar)
+// ═════════════════════════════════════════════════════════════════════════
+
+.nav-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--of-space-xs);
+  padding: var(--of-space-sm);
+  align-items: center;
+}
+
+// Horizontal bar → actions in a row
+.bar.horizontal .nav-quick-actions,
+.bar.top .nav-quick-actions,
+.bar.bottom .nav-quick-actions {
+  flex-direction: row;
+}
+
+.quick-action-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: var(--of-corner-md);
+  background: transparent;
+  color: var(--of-text-tertiary);
+  cursor: pointer;
+  transition:
+    background var(--of-duration-fast) var(--of-ease-decelerate),
+    color var(--of-duration-fast) var(--of-ease-decelerate),
+    border-color var(--of-duration-fast) var(--of-ease-decelerate),
+    transform var(--of-duration-fast) var(--of-ease-decelerate);
+  outline: none;
+
+  svg {
+    pointer-events: none;
+  }
+
+  &:hover {
+    background: var(--of-surface-hover);
+    border-color: var(--of-surface-stroke);
+    color: var(--of-text-primary);
+  }
+
+  &:active {
+    background: var(--of-surface-active);
+    transform: scale(0.92);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--of-accent);
+    outline-offset: 1px;
+  }
+
+  &.active {
+    background: var(--of-accent-subtle);
+    border-color: var(--of-accent);
+    color: var(--of-accent);
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+//  TOOLTIP — Windows 11 TeachingTip / Flyout style
+// ═════════════════════════════════════════════════════════════════════════
+
+.of-tooltip {
+  position: fixed;
+  z-index: 9999;
+  padding: 5px 10px;
+  background: var(--of-mica-fallback);
+  border: 1px solid var(--of-surface-stroke);
+  border-radius: var(--of-corner-lg);
+  box-shadow: var(--of-shadow-tooltip);
+  color: var(--of-text-primary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity var(--of-duration-fast) var(--of-ease-decelerate),
+    transform var(--of-duration-fast) var(--of-ease-decelerate);
+  backdrop-filter: blur(16px) saturate(1.25);
+
+  &.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+//  SEPARATOR — Divider line between sections
+// ═════════════════════════════════════════════════════════════════════════
+
+.of-separator {
+  flex-shrink: 0;
+  background: var(--of-divider);
+  border: none;
+  margin: var(--of-space-sm) var(--of-space-md);
+}
+
+// Auto-orient based on bar direction
+.bar.vertical .of-separator,
+.bar.left .of-separator,
+.bar.right .of-separator {
+  width: 60%;
+  height: 1px;
+  align-self: center;
+}
+
+.bar.horizontal .of-separator,
+.bar.top .of-separator,
+.bar.bottom .of-separator {
+  width: 1px;
+  height: 60%;
+  align-self: center;
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+//  BADGE — Notification dot (WinUI InfoBadge)
+// ═════════════════════════════════════════════════════════════════════════
+
+.of-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--of-accent);
+  box-shadow: 0 0 0 2px var(--of-mica-fallback);
+  pointer-events: none;
+
+  &.of-badge-dot {
+    width: 6px;
+    height: 6px;
+  }
+
+  &.of-badge-count {
+    width: auto;
+    height: auto;
+    min-width: 14px;
+    padding: 0 4px;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 14px;
+    text-align: center;
+    color: #000;
+    border-radius: 7px;
+    top: 2px;
+    right: 2px;
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+//  UTILITY — Layout helpers
+// ═════════════════════════════════════════════════════════════════════════
+
+.of-spacer {
+  flex: 1;
+}
+
+.of-gap-sm { gap: var(--of-space-sm); }
+.of-gap-md { gap: var(--of-space-md); }
+.of-gap-lg { gap: var(--of-space-lg); }
