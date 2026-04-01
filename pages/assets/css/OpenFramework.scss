@@ -152,17 +152,17 @@
     flex-direction: row;
   }
 
-  // ── Alignment on main axis ────────────────────────────────────────
+  // ── Cross-axis alignment ──────────────────────────────────────────
   &.start {
-    justify-content: flex-start;
+    align-items: flex-start;
   }
 
   &.center {
-    justify-content: center;
+    align-items: center;
   }
 
   &.end {
-    justify-content: flex-end;
+    align-items: flex-end;
   }
 }
 
@@ -482,3 +482,8 @@
 .of-gap-sm { gap: var(--of-space-sm); }
 .of-gap-md { gap: var(--of-space-md); }
 .of-gap-lg { gap: var(--of-space-lg); }
+
+// Offset content area when a left bar is present.
+.app-layout {
+  padding-left: var(--of-bar-width);
+}

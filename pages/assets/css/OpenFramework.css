@@ -101,13 +101,13 @@
   flex-direction: row;
 }
 .bar.start {
-  justify-content: flex-start;
+  align-items: flex-start;
 }
 .bar.center {
-  justify-content: center;
+  align-items: center;
 }
 .bar.end {
-  justify-content: flex-end;
+  align-items: flex-end;
 }
 
 .nav {
@@ -352,6 +352,10 @@
 
 .of-gap-lg {
   gap: var(--of-space-lg);
+}
+
+.app-layout {
+  padding-left: var(--of-bar-width);
 }
 
 /*# sourceMappingURL=OpenFrameWork.css.map */
