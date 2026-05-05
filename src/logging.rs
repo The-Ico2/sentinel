@@ -127,8 +127,32 @@ pub fn enqueue(level: &str, msg: String) {
 
 struct ProjectOpenLogger;
 
+/// Returns true if the given log target should be suppressed below WARN.
+/// Used to silence noisy dependencies (e.g. cosmic-text's per-relayout DEBUG spam,
+/// naga's shader compilation chatter).
+#[inline]
+fn is_noisy_target(target: &str) -> bool {
+    // Match the crate prefix (target is usually "crate_name" or "crate_name::module").
+    const NOISY: &[&str] = &[
+        "cosmic_text",
+        "naga",
+        "wgpu_core",
+        "wgpu_hal",
+        "wgpu",
+        "winit",
+        "glyphon",
+    ];
+    NOISY.iter().any(|prefix| {
+        target == *prefix || target.starts_with(&format!("{prefix}::"))
+    })
+}
+
 impl Log for ProjectOpenLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
+        // Noisy third-party crates only get through at WARN or above.
+        if is_noisy_target(metadata.target()) {
+            return metadata.level() <= Level::Warn;
+        }
         if DEBUG_ENABLED.load(Ordering::Relaxed) {
             metadata.level() <= Level::Debug
         } else {

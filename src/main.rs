@@ -158,6 +158,13 @@ fn main() {
         .iter()
         .any(|a| a == "--addon-config-ui" || a == "--veil-ui" || a == "--addon-webview");
 
+    // `--no-backend` (alias `--ui-only`): launch JUST the PRISM-managed UI
+    // (window, scene graph, system tray) without spinning up the IPC server,
+    // HTTP bridge, data updaters, addon autostart, etc. Useful for quickly
+    // iterating on UI changes or running VEIL on a system where backend
+    // services would conflict with another running instance.
+    let no_backend = args.iter().any(|a| a == "--no-backend" || a == "--ui-only");
+
     // Enable logging before the singleton check so a silent exit is observable.
     logging::init("VEIL", "Core", true);
     info!("VEIL backend starting (args={:?})", &args[1..]);
@@ -173,6 +180,17 @@ fn main() {
             }
         }
     };
+
+    if no_backend && !is_ui_mode {
+        info!("--no-backend flag detected: launching UI directly without backend services");
+        if let Err(e) = crate::ui::launch() {
+            error!("UI launch failed: {e}");
+        }
+        if let Some(handle) = instance_guard {
+            unsafe { let _ = CloseHandle(handle); }
+        }
+        return;
+    }
 
     if std::env::args().count() > 1 {
         info!("CLI mode detected");

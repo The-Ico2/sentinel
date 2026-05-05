@@ -53,55 +53,127 @@
         setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 240);
       }, 3000);
     },
-    /** Render the addon dropdown in the sidebar from window.__veilAddons. */
+    /**
+     * Render the addon list in the sidebar from window.__veilAddons.
+     * Each addon is a full-width row with icon + name. Clicking an
+     * addon toggles a list of its child pages (or, if it only has one
+     * page, navigates directly).
+     */
     renderAddonList: function () {
       var host = document.querySelector("[data-veil-addon-list]");
       if (!host) return;
       var addons = (typeof window !== "undefined" && window.__veilAddons) || [];
+
       // Clear current children.
       while (host.firstChild) host.removeChild(host.firstChild);
 
-      if (!addons.length) return;
+      if (!addons.length) {
+        var empty = document.createElement("div");
+        empty.className = "veil-addon-list__empty";
+        empty.textContent = "No addons installed";
+        host.appendChild(empty);
+        return;
+      }
+
+      function makeIconSvg(letter) {
+        // Fallback: a rounded square with the addon's initial.
+        // Inline SVG so PRISM rasterises it at currentColor.
+        var ns = "http://www.w3.org/2000/svg";
+        var svg = document.createElementNS(ns, "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.6");
+        var rect = document.createElementNS(ns, "rect");
+        rect.setAttribute("x", "3"); rect.setAttribute("y", "3");
+        rect.setAttribute("width", "18"); rect.setAttribute("height", "18");
+        rect.setAttribute("rx", "4");
+        svg.appendChild(rect);
+        var text = document.createElementNS(ns, "text");
+        text.setAttribute("x", "12"); text.setAttribute("y", "16");
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("font-size", "11");
+        text.setAttribute("fill", "currentColor");
+        text.setAttribute("stroke", "none");
+        text.textContent = (letter || "?").toUpperCase();
+        svg.appendChild(text);
+        return svg;
+      }
 
       for (var i = 0; i < addons.length; i++) {
         var a = addons[i];
-        // Per-addon header (clicking the header navigates to the addon's
-        // first page if it has one — this gives the dashboard entry point.)
-        var firstRoute = a.pages && a.pages.length ? a.pages[0].route : null;
-        var addonItem = document.createElement("button");
-        addonItem.className = "veil-nav-item veil-nav-item--addon";
-        if (firstRoute) addonItem.setAttribute("data-navigate", firstRoute);
-        addonItem.setAttribute("data-tooltip", a.name);
+        var pages = a.pages || [];
+        var hasMultiple = pages.length > 1;
 
-        var label = document.createElement("span");
-        label.className = "veil-nav-item__label";
-        label.textContent = a.name;
-        addonItem.appendChild(label);
-        host.appendChild(addonItem);
+        // ── Addon row ──────────────────────────────────────────
+        var row = document.createElement("button");
+        row.className = "veil-addon-item";
+        row.setAttribute("data-tooltip", a.name);
 
-        // Sub-pages for this addon.
-        for (var j = 0; j < (a.pages || []).length; j++) {
-          var p = a.pages[j];
+        var icon = document.createElement("span");
+        icon.className = "veil-addon-item__icon";
+        icon.appendChild(makeIconSvg(a.name.charAt(0)));
+        row.appendChild(icon);
+
+        var nameEl = document.createElement("span");
+        nameEl.className = "veil-addon-item__name";
+        nameEl.textContent = a.name;
+        row.appendChild(nameEl);
+
+        if (hasMultiple) {
+          var caret = document.createElement("span");
+          caret.className = "veil-addon-item__caret";
+          var ns = "http://www.w3.org/2000/svg";
+          var csvg = document.createElementNS(ns, "svg");
+          csvg.setAttribute("viewBox", "0 0 24 24");
+          csvg.setAttribute("fill", "none");
+          csvg.setAttribute("stroke", "currentColor");
+          csvg.setAttribute("stroke-width", "1.8");
+          csvg.setAttribute("stroke-linecap", "round");
+          csvg.setAttribute("stroke-linejoin", "round");
+          var poly = document.createElementNS(ns, "polyline");
+          poly.setAttribute("points", "9 6 15 12 9 18");
+          csvg.appendChild(poly);
+          caret.appendChild(csvg);
+          row.appendChild(caret);
+        }
+        host.appendChild(row);
+
+        // ── Children (pages) — hidden by default unless single ─
+        var children = document.createElement("div");
+        children.className = "veil-addon-children";
+        if (!hasMultiple) children.style.display = "none";
+        for (var j = 0; j < pages.length; j++) {
+          var p = pages[j];
           var pageItem = document.createElement("button");
-          pageItem.className = "veil-nav-item veil-nav-item--addon-page";
+          pageItem.className = "veil-addon-page";
           pageItem.setAttribute("data-navigate", p.route);
           pageItem.setAttribute("data-tooltip", p.label);
-
-          var plabel = document.createElement("span");
-          plabel.className = "veil-nav-item__label";
-          plabel.textContent = p.label;
-          pageItem.appendChild(plabel);
-
+          pageItem.textContent = p.label;
           (function (btn, route) {
             btn.addEventListener("click", function () { Veil.navigate(route); });
           })(pageItem, p.route);
-          host.appendChild(pageItem);
+          children.appendChild(pageItem);
         }
+        host.appendChild(children);
 
-        (function (btn, route) {
-          if (!route) return;
-          btn.addEventListener("click", function () { Veil.navigate(route); });
-        })(addonItem, firstRoute);
+        // Row click: toggle children, or navigate if single page.
+        (function (btn, kids, multiple, firstRoute) {
+          btn.addEventListener("click", function () {
+            if (!multiple) {
+              if (firstRoute) Veil.navigate(firstRoute);
+              return;
+            }
+            var open = btn.classList.contains("is-open");
+            if (open) {
+              btn.classList.remove("is-open");
+              kids.style.display = "none";
+            } else {
+              btn.classList.add("is-open");
+              kids.style.display = "flex";
+            }
+          });
+        })(row, children, hasMultiple, pages.length ? pages[0].route : null);
       }
     }
   };

@@ -112,7 +112,11 @@ fn build_app_host(addons: &[extensions::DiscoveredAddon]) -> AppHost {
     }
 
     // Load custom title bar (title-bar.html) if present.
-    host.load_title_bar(&pages_root);
+    // NOTE: disabled until window-control IPC + drag/resize hit-testing are
+    // wired up. Loading the title bar would strip native window decorations
+    // (no minimise/maximise/close/resize handles), which is worse than the
+    // current state.
+    // host.load_title_bar(&pages_root);
     host.set_home_route("home");
 
     // Register addon-contributed routes (id = "<addon_id>.<page_id>").

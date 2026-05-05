@@ -208,13 +208,11 @@ h3 { font-size: var(--veil-fs-subtitle); }
 p  { margin: 0 0 var(--veil-space-3); color: var(--veil-text-secondary); }
 
 /* ── App Shell ─────────────────────────────────────────────────────── */
-/* Note: the custom title bar is rendered as an overlay scene by PRISM
-   itself (via AppHost::load_title_bar) — it sits above the page area, so
-   the page DOM does NOT need to reserve a row for it. */
+/* The window's full client area. With native decorations restored, the
+   page's job is to fill the inner-size rectangle with sidebar + content. */
 .veil-app, .prism-app, .app-layout {
-  display: grid;
-  grid-template-rows: 1fr;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   background: var(--veil-bg-base);
@@ -241,10 +239,39 @@ p  { margin: 0 0 var(--veil-space-3); color: var(--veil-text-secondary); }
 
 /* The body row (sidebar + content) fills the page area */
 .veil-shell {
-  display: grid;
-  grid-template-columns: auto 1fr;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   min-height: 0;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
+}
+
+/* Sidebar slot — explicit width so PRISM's layout engine doesn't have to
+   guess from grid `auto`. */
+.veil-shell > aside,
+.veil-shell > .veil-sidebar,
+.veil-shell > .prism-sidebar {
+  flex: 0 0 var(--veil-sidebar-w);
+  width: var(--veil-sidebar-w);
+  height: 100%;
+}
+.veil-shell > aside.is-rail,
+.veil-shell > .veil-sidebar.is-rail,
+.veil-shell > .prism-sidebar.is-rail {
+  flex: 0 0 var(--veil-sidebar-w-rail);
+  width: var(--veil-sidebar-w-rail);
+}
+
+/* Content slot — takes the remaining space. */
+.veil-shell > main,
+.veil-shell > .veil-content,
+.veil-shell > .prism-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
 }
 
 /* ── Title Bar ─────────────────────────────────────────────────────── */
@@ -330,6 +357,8 @@ p  { margin: 0 0 var(--veil-space-3); color: var(--veil-text-secondary); }
   padding: var(--veil-space-3) var(--veil-space-2);
   gap: var(--veil-space-1);
   position: relative;
+  /* Sidebar itself doesn't scroll — only the body region does. Hidden
+     here clips the spectrum hairline pseudo-element to the column. */
   overflow: hidden;
   transition: width var(--veil-dur-3) var(--veil-ease),
               padding var(--veil-dur-3) var(--veil-ease);
@@ -352,11 +381,10 @@ p  { margin: 0 0 var(--veil-space-3); color: var(--veil-text-secondary); }
   width: var(--veil-sidebar-w-rail);
   padding: var(--veil-space-3) var(--veil-space-1);
 }
-.veil-sidebar.is-rail .veil-nav-item__label,
-.veil-sidebar.is-rail .veil-nav-item__caret,
-.veil-sidebar.is-rail .veil-nav-children,
 .veil-sidebar.is-rail .veil-sidebar__brand-text,
-.veil-sidebar.is-rail .veil-nav-section__heading {
+.veil-sidebar.is-rail .veil-addon-item__name,
+.veil-sidebar.is-rail .veil-addon-item__caret,
+.veil-sidebar.is-rail .veil-addon-children {
   display: none;
 }
 
@@ -366,6 +394,7 @@ p  { margin: 0 0 var(--veil-space-3); color: var(--veil-text-secondary); }
   gap: var(--veil-space-2);
   padding: var(--veil-space-2) var(--veil-space-2);
   margin-bottom: var(--veil-space-2);
+  flex: 0 0 auto;
 }
 .veil-sidebar__toggle {
   width: 36px;
@@ -391,86 +420,124 @@ p  { margin: 0 0 var(--veil-space-3); color: var(--veil-text-secondary); }
   color: transparent;
 }
 
-.veil-nav-section { display: flex; flex-direction: column; gap: 2px; padding: var(--veil-space-2) 0; }
-.veil-nav-section + .veil-nav-section { border-top: 1px solid var(--veil-stroke-subtle); }
-.veil-nav-section__heading {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--veil-text-tertiary);
-  padding: var(--veil-space-2) var(--veil-space-3);
+/* Body — the scrollable middle region (addon list) */
+.veil-sidebar__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--veil-space-2) 0;
 }
-.veil-sidebar__spacer { flex: 1 1 auto; }
 
-/* Nav item — primary */
-.veil-nav-item, .prism-nav-item {
+/* Footer — 4 icon buttons side by side at the bottom */
+.veil-sidebar__footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--veil-space-1);
+  padding: var(--veil-space-2) var(--veil-space-2);
+  border-top: 1px solid var(--veil-stroke-subtle);
+}
+.veil-foot-btn {
+  flex: 1 1 0;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--veil-radius-sm);
+  color: var(--veil-text-secondary);
+  background: transparent;
+  transition: background var(--veil-dur-1) var(--veil-ease),
+              color var(--veil-dur-1) var(--veil-ease);
+}
+.veil-foot-btn:hover { background: var(--veil-bg-layer-2); color: var(--veil-text-primary); }
+.veil-foot-btn.is-active, .veil-foot-btn.active {
+  background: var(--veil-violet-soft);
+  color: var(--veil-text-primary);
+}
+.veil-foot-btn svg { width: 18px; height: 18px; }
+
+/* Addon list — each item spans the sidebar's full width vertically */
+.veil-addon-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--veil-space-1);
+}
+.veil-addon-list__empty {
+  color: var(--veil-text-tertiary);
+  font-size: var(--veil-fs-caption);
+  text-align: center;
+  padding: var(--veil-space-4) var(--veil-space-2);
+  opacity: 0.7;
+}
+.veil-addon-item {
   position: relative;
   display: grid;
-  grid-template-columns: 24px 1fr auto;
+  grid-template-columns: 28px 1fr auto;
   align-items: center;
   gap: var(--veil-space-3);
-  height: 36px;
+  width: 100%;
+  height: 40px;
   padding: 0 var(--veil-space-3);
   border-radius: var(--veil-radius-sm);
   color: var(--veil-text-secondary);
   font-size: var(--veil-fs-body-lg);
   text-align: left;
+  background: transparent;
   transition: background var(--veil-dur-1) var(--veil-ease),
               color var(--veil-dur-1) var(--veil-ease);
 }
-.veil-nav-item:hover, .prism-nav-item:hover {
-  background: var(--veil-bg-layer-2);
-  color: var(--veil-text-primary);
-}
-.veil-nav-item.is-active, .prism-nav-item.is-active,
-.veil-nav-item.active, .prism-nav-item.active {
+.veil-addon-item:hover { background: var(--veil-bg-layer-2); color: var(--veil-text-primary); }
+.veil-addon-item.is-active, .veil-addon-item.active {
   background: var(--veil-violet-soft);
   color: var(--veil-text-primary);
 }
-.veil-nav-item.is-active::before, .prism-nav-item.is-active::before,
-.veil-nav-item.active::before, .prism-nav-item.active::before {
-  content: "";
-  position: absolute;
-  left: -2px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--veil-violet);
-  box-shadow: 0 0 12px var(--veil-violet-glow);
-}
-
-.veil-nav-item__icon {
-  width: 24px; height: 24px;
+.veil-addon-item__icon {
+  width: 28px; height: 28px;
   display: inline-flex; align-items: center; justify-content: center;
   color: currentColor;
 }
-.veil-nav-item__icon svg { width: 18px; height: 18px; }
-.veil-nav-item__label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.veil-nav-item__caret {
+.veil-addon-item__icon svg { width: 22px; height: 22px; }
+.veil-addon-item__name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.veil-addon-item__caret {
   width: 14px; height: 14px;
   color: var(--veil-text-tertiary);
   transition: transform var(--veil-dur-2) var(--veil-ease);
 }
-.veil-nav-item.is-open .veil-nav-item__caret { transform: rotate(90deg); color: var(--veil-violet); }
-
-/* Hierarchical sub-items — only render when sidebar is expanded and parent is open */
-.veil-nav-children {
-  display: none;
+.veil-addon-item.is-open .veil-addon-item__caret {
+  transform: rotate(90deg);
+  color: var(--veil-violet);
+}
+.veil-addon-children {
+  display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 2px 0 var(--veil-space-2) var(--veil-space-7);
 }
-.veil-nav-item.is-open + .veil-nav-children { display: flex; }
-.veil-nav-children .veil-nav-item {
+.veil-addon-page {
+  display: block;
+  width: 100%;
   height: 30px;
-  font-size: var(--veil-fs-body);
+  padding: 0 var(--veil-space-3);
+  border-radius: var(--veil-radius-sm);
   color: var(--veil-text-tertiary);
-  grid-template-columns: 16px 1fr;
+  font-size: var(--veil-fs-body);
+  text-align: left;
+  background: transparent;
+  transition: background var(--veil-dur-1) var(--veil-ease),
+              color var(--veil-dur-1) var(--veil-ease);
 }
-.veil-nav-children .veil-nav-item.is-active { color: var(--veil-text-primary); background: var(--veil-bg-layer-2); }
-.veil-nav-children .veil-nav-item.is-active::before { background: var(--veil-blood); box-shadow: 0 0 12px var(--veil-blood-glow); }
+.veil-addon-page:hover { background: var(--veil-bg-layer-2); color: var(--veil-text-primary); }
+.veil-addon-page.is-active, .veil-addon-page.active {
+  color: var(--veil-text-primary);
+  background: var(--veil-bg-layer-2);
+}
 
 /* ── Content area ──────────────────────────────────────────────────── */
 .veil-content, .prism-content {
@@ -478,7 +545,10 @@ p  { margin: 0 0 var(--veil-space-3); color: var(--veil-text-secondary); }
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
+  /* Universal vertical scrolling for any page that overflows. Pages can
+     opt out by setting `overflow: hidden` on their root element. */
+  overflow-y: auto;
+  overflow-x: hidden;
   background: linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.01) 100%);
 }
 
