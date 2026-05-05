@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/appdata/mod.rs
+// ~/veil/veil-backend/src/ipc/appdata/mod.rs
 
 pub mod window;
 pub mod notifications;

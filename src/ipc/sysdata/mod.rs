@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/sysdata/mod.rs
+// ~/veil/veil-backend/src/ipc/sysdata/mod.rs
 
 pub mod cpu;
 pub mod gpu;

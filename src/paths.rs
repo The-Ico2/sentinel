@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/paths.rs
+// ~/veil/veil-backend/src/paths.rs
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -28,13 +28,13 @@ pub fn user_home_dir() -> Option<PathBuf> {
     }
 }
 
-/// The canonical OpenDesktop root is always `~/ProjectOpen/OpenDesktop/`.
+/// The canonical VEIL root is always `~/ProjectOpen/VEIL/`.
 /// All config, addons, and assets live here.
 /// Result is cached after the first successful resolution.
-pub fn od_root_dir() -> PathBuf {
+pub fn veil_root_dir() -> PathBuf {
     CACHED_ROOT.get_or_init(|| {
         let root = if let Some(home) = user_home_dir() {
-            home.join("ProjectOpen").join("OpenDesktop")
+            home.join("ProjectOpen").join("VEIL")
         } else {
             warn!("Could not resolve home directory, falling back to exe parent");
             match std::env::current_exe() {
@@ -46,7 +46,7 @@ pub fn od_root_dir() -> PathBuf {
                 }
             }
         };
-        info!("OpenDesktop root resolved: {}", root.display());
+        info!("VEIL root resolved: {}", root.display());
         root
     }).clone()
 }

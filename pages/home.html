@@ -1,32 +1,59 @@
-<div class="page-content">
-  <div class="page">
-    <div class="page-header">
-      <span class="page-header-label">Dashboard</span>
-      <h1>OpenDesktop</h1>
-      <p class="subtitle">Desktop customization platform</p>
+<div class="veil-page">
+    <div class="veil-page__header">
+        <div class="veil-page__eyebrow">Dashboard</div>
+        <h1 class="veil-page__title">Welcome to <span class="veil-spectrum-text">VEIL</span></h1>
+        <p class="veil-page__subtitle">A modern, extensible desktop personalization platform. Customize wallpapers, status bars, overlays, and window layout from one place.</p>
     </div>
 
-    <div class="stats-row">
-      <div class="stat-card">
-        <span class="stat-value" id="addon-count">0</span>
-        <span class="stat-label">Addons</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value" id="asset-count">0</span>
-        <span class="stat-label">Assets</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value" id="monitor-count">0</span>
-        <span class="stat-label">Monitors</span>
-      </div>
+    <div class="veil-stat-grid">
+        <div class="veil-stat">
+            <span class="veil-stat__label">Addons</span>
+            <span class="veil-stat__value" data-stat="addons">0</span>
+            <span class="veil-stat__delta">installed</span>
+        </div>
+        <div class="veil-stat">
+            <span class="veil-stat__label">Assets</span>
+            <span class="veil-stat__value" data-stat="assets">0</span>
+            <span class="veil-stat__delta">indexed</span>
+        </div>
+        <div class="veil-stat">
+            <span class="veil-stat__label">Monitors</span>
+            <span class="veil-stat__value" data-stat="monitors">0</span>
+            <span class="veil-stat__delta">detected</span>
+        </div>
+        <div class="veil-stat veil-stat--blood">
+            <span class="veil-stat__label">Status</span>
+            <span class="veil-stat__value">Live</span>
+            <span class="veil-stat__delta">backend connected</span>
+        </div>
     </div>
 
-    <div class="addon-list" id="addon-list">
-      <div class="empty-state">
-        <div class="empty-state-icon">A</div>
-        <p>No addons installed</p>
-        <p class="hint">Install addons to customise your desktop — wallpapers, status bars, overlays, and more.</p>
-      </div>
-    </div>
-  </div>
+    <section class="veil-mb-7">
+        <h2 class="veil-subtitle veil-mb-3">Quick actions</h2>
+        <div class="veil-flex veil-gap-3">
+            <button class="veil-btn veil-btn--violet" data-navigate="addons">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Manage addons
+            </button>
+            <button class="veil-btn" data-navigate="store">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l1.5-3h15L21 7"/><path d="M3 7v12a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7"/></svg>
+                Browse store
+            </button>
+            <button class="veil-btn veil-btn--ghost" data-action="open-folder" data-folder="VEIL">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                Open VEIL folder
+            </button>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="veil-subtitle veil-mb-3">Recent activity</h2>
+        <div class="veil-empty">
+            <span class="veil-empty__mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+            </span>
+            <p>No recent activity yet.</p>
+            <p class="veil-empty__hint">Activity will appear here as addons start, stop, and report events.</p>
+        </div>
+    </section>
 </div>

@@ -1,9 +1,9 @@
-// ~/opendesktop/od-backend/src/ipc/http_bridge.rs
+// ~/veil/veil-backend/src/ipc/http_bridge.rs
 //
 // Lightweight HTTP bridge for browser-based wallpaper prototyping.
 // Exposes the same IPC dispatch as the named pipe server, but over
 // HTTP so that wallpapers loaded in a web browser (via Live Server,
-// file://, etc.) can access real-time OpenDesktop data.
+// file://, etc.) can access real-time VEIL data.
 //
 // Endpoints:
 //   GET  /api/{ns}/{cmd}?sections=cpu,gpu,...

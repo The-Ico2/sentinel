@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/sysdata/display.rs
+// ~/veil/veil-backend/src/ipc/sysdata/display.rs
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};

@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/dispatch/addond.rs
+// ~/veil/veil-backend/src/ipc/dispatch/addond.rs
 
 use serde_json::Value;
 use crate::ipc::addon::{start, stop, reload};

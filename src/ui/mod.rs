@@ -1,18 +1,19 @@
 mod pages;
+mod extensions;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use openrender_runtime::gpu::context::GpuContext;
-use openrender_runtime::gpu::renderer::Renderer;
-use openrender_runtime::scene::app_host::{AppEvent, AppHost, PageSource, Route};
-use openrender_runtime::scene::input_handler::{
+use prism_runtime::gpu::context::GpuContext;
+use prism_runtime::gpu::renderer::Renderer;
+use prism_runtime::scene::app_host::{AppEvent, AppHost, PageSource, Route};
+use prism_runtime::scene::input_handler::{
     KeyCode, Modifiers, MouseButton as CxMouseButton, RawInputEvent,
 };
-use openrender_runtime::capabilities::{CapabilitySet, NetworkAccess, TrayAccess, SingleInstance};
-use openrender_runtime::instance::{self, InstanceLockResult};
-use openrender_runtime::tray::{TrayConfig, TrayMenuEntry, TrayMenuItem, TrayMenuAction, TraySubmenu};
+use prism_runtime::capabilities::{CapabilitySet, NetworkAccess, TrayAccess, SingleInstance};
+use prism_runtime::instance::{self, InstanceLockResult};
+use prism_runtime::tray::{TrayConfig, TrayMenuEntry, TrayMenuItem, TrayMenuAction, TraySubmenu};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -24,25 +25,26 @@ use crate::Addon;
 use crate::autostart;
 use crate::ipc::sysdata::display::MonitorManager;
 
-/// Launch the OpenRender UI for OpenDesktop.
+/// Launch the Prism UI for VEIL.
 pub fn launch() -> Result<(), Box<dyn std::error::Error>> {
     // Enforce single-instance for the UI process.
-    let instance_guard = match instance::acquire_single_instance("OpenDesktop-UI") {
+    let instance_guard = match instance::acquire_single_instance("VEIL-UI") {
         InstanceLockResult::Acquired(guard) => Some(guard),
         InstanceLockResult::AlreadyRunning => {
-            log::info!("Another OpenDesktop UI instance is already running — focusing it.");
+            log::info!("Another VEIL UI instance is already running — focusing it.");
             return Ok(());
         }
     };
 
-    let mut host = build_app_host();
+    let discovered = extensions::discover_all();
+    let mut host = build_app_host(&discovered);
 
     if let Some(guard) = instance_guard {
         host.set_instance_guard(guard);
     }
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
-    let mut app = OpenDesktopApp::new(host);
+    let mut app = VEILApp::new(host, discovered);
 
     if let Err(e) = event_loop.run_app(&mut app) {
         log::error!("Event loop error: {e}");
@@ -69,8 +71,8 @@ fn load_declared_icon(host: &AppHost, target: &str) -> Option<(Vec<u8>, u32, u32
     None
 }
 
-fn build_app_host() -> AppHost {
-    let mut host = AppHost::new("OpenDesktop");
+fn build_app_host(addons: &[extensions::DiscoveredAddon]) -> AppHost {
+    let mut host = AppHost::new("VEIL");
     host.sidebar_width = 0.0; // Sidebar is part of the page HTML
 
     host.set_capabilities(
@@ -80,21 +82,48 @@ fn build_app_host() -> AppHost {
             .declare(SingleInstance),
     );
 
-    // Single route: base.html is the template with sidebar + page-content.
-    // Individual pages (home, addons, data, settings, store) are loaded as
-    // content fragments inside <page-content> via data-navigate sidebar clicks.
+    // base.html is the shell — sidebar + <page-content default="home"/>.
+    // PRISM's <page-content> swaps fragments by route id; we register one
+    // route per page file so data-navigate clicks resolve correctly.
+    let pages_root = pages::base_page().parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+
     host.add_route(Route {
-        id: "home".into(),
-        label: "Home".into(),
+        id: "base".into(),
+        label: "VEIL".into(),
         icon: None,
-        source: PageSource::HtmlFile(pages::base_page()),
+        source: PageSource::HtmlFile(pages_root.join("base.html")),
         separator: false,
     });
 
-    // Load custom title bar if present.
-    host.load_title_bar(&pages::base_page().parent().unwrap_or(std::path::Path::new(".")));
+    for (id, label, file) in [
+        ("home",     "Home",     "home.html"),
+        ("data",     "Data",     "data.html"),
+        ("addons",   "Addons",   "addons.html"),
+        ("store",    "Store",    "store.html"),
+        ("settings", "Settings", "settings.html"),
+    ] {
+        host.add_route(Route {
+            id: id.into(),
+            label: label.into(),
+            icon: None,
+            source: PageSource::HtmlFile(pages_root.join(file)),
+            separator: false,
+        });
+    }
 
-    host.navigate_to("home");
+    // Load custom title bar (title-bar.html) if present.
+    host.load_title_bar(&pages_root);
+    host.set_home_route("home");
+
+    // Register addon-contributed routes (id = "<addon_id>.<page_id>").
+    for addon in addons {
+        for route in &addon.routes {
+            host.add_route(route.clone());
+        }
+    }
+
+    // Open into the shell; <page-content default="home"/> renders home.html as the fragment.
+    host.navigate_to("base");
     host
 }
 
@@ -102,7 +131,7 @@ fn build_app_host() -> AppHost {
 // Application state
 // ---------------------------------------------------------------------------
 
-struct OpenDesktopApp {
+struct VEILApp {
     host: AppHost,
     window: Option<Arc<Window>>,
     gpu_ctx: Option<GpuContext>,
@@ -127,10 +156,12 @@ struct OpenDesktopApp {
     // Addon tray state
     tray_addons: Vec<Addon>,
     tray_settings: autostart::TraySettings,
+    // Discovered UI extensions (ext.prism.json) — used to populate sidebar.
+    discovered_addons: Vec<extensions::DiscoveredAddon>,
 }
 
-impl OpenDesktopApp {
-    fn new(host: AppHost) -> Self {
+impl VEILApp {
+    fn new(host: AppHost, discovered_addons: Vec<extensions::DiscoveredAddon>) -> Self {
         let mut tray_settings = autostart::load_tray_settings();
 
         // Sync the run-at-startup flag with the actual registry state.
@@ -162,6 +193,7 @@ impl OpenDesktopApp {
             data_filter: "all".to_string(),
             tray_addons: Vec::new(),
             tray_settings,
+            discovered_addons,
         }
     }
 
@@ -187,7 +219,7 @@ impl OpenDesktopApp {
         match (ns, cmd) {
             // ── Addons ────────────────────────────────────────────────
             ("addons", "refresh") => self.ipc_addons_refresh(),
-            ("addons", "open-folder") => self.ipc_open_od_folder("Addons"),
+            ("addons", "open-folder") => self.ipc_open_veil_folder("Addons"),
             ("addons", "start") | ("addons", "stop") | ("addons", "reload") => {
                 let addon_name = args.as_ref()
                     .and_then(|a| a.get("addon_name"))
@@ -268,7 +300,7 @@ impl OpenDesktopApp {
             }
 
             // ── App ───────────────────────────────────────────────────
-            ("app", "open-folder") => self.ipc_open_od_folder(""),
+            ("app", "open-folder") => self.ipc_open_veil_folder(""),
             ("app", "exit") => {
                 log::info!("App exit: stopping all addons");
                 crate::ipc::addon::stop_all();
@@ -286,11 +318,11 @@ impl OpenDesktopApp {
     // -----------------------------------------------------------------------
 
     fn ipc_addons_refresh(&mut self) {
-        let od_home = match od_home_dir() {
+        let veil_home = match veil_home_dir() {
             Some(d) => d,
             None => return,
         };
-        let addons_dir = od_home.join("Addons");
+        let addons_dir = veil_home.join("Addons");
         if !addons_dir.exists() {
             self.host.execute_js(
                 "if(typeof showToast==='function')showToast('Addons folder not found','warning');",
@@ -360,11 +392,11 @@ impl OpenDesktopApp {
 
     /// Open the detail view for a specific addon, showing its option tabs.
     fn ipc_addon_view(&mut self, addon_name: &str) {
-        let od_home = match od_home_dir() {
+        let veil_home = match veil_home_dir() {
             Some(d) => d,
             None => return,
         };
-        let addon_dir = od_home.join("Addons").join(addon_name);
+        let addon_dir = veil_home.join("Addons").join(addon_name);
         if !addon_dir.exists() {
             self.host.execute_js(
                 &format!("if(typeof showToast==='function')showToast('Addon folder not found: {}','warning');",
@@ -452,11 +484,11 @@ impl OpenDesktopApp {
 
     /// Switch to a specific tab within the addon detail view.
     fn ipc_addon_switch_tab(&mut self, addon_name: &str, tab: &str) {
-        let od_home = match od_home_dir() {
+        let veil_home = match veil_home_dir() {
             Some(d) => d,
             None => return,
         };
-        let addon_dir = od_home.join("Addons").join(addon_name);
+        let addon_dir = veil_home.join("Addons").join(addon_name);
         let options_dir = addon_dir.join("options");
 
         // Update active tab styling
@@ -486,14 +518,14 @@ impl OpenDesktopApp {
             let js_src = std::fs::read_to_string(options_dir.join("options.js")).unwrap_or_default();
 
             // Build the odData payload that the options.js expects
-            let od_data = self.build_addon_od_data(addon_name, &addon_dir);
-            let od_data_json = serde_json::to_string(&od_data).unwrap_or_else(|_| "{}".to_string());
+            let veil_data = self.build_addon_veil_data(addon_name, &addon_dir);
+            let veil_data_json = serde_json::to_string(&veil_data).unwrap_or_else(|_| "{}".to_string());
 
             content_html = format!(
-                "<style>{css}</style><div class=\"addon-options-frame\">{body}</div><script>var odData={od_data};var wallpaperData=odData.wallpaper||{{}};var wallpapers=Array.isArray(wallpaperData.assets)?wallpaperData.assets:[];var monitors=Array.isArray(wallpaperData.monitors)?wallpaperData.monitors:[];var profiles=Array.isArray(wallpaperData.profiles)?wallpaperData.profiles:[];var addonId=odData.addonId||'';var hostedByOD=true;{js}</script>",
+                "<style>{css}</style><div class=\"addon-options-frame\">{body}</div><script>var odData={veil_data};var wallpaperData=odData.wallpaper||{{}};var wallpapers=Array.isArray(wallpaperData.assets)?wallpaperData.assets:[];var monitors=Array.isArray(wallpaperData.monitors)?wallpaperData.monitors:[];var profiles=Array.isArray(wallpaperData.profiles)?wallpaperData.profiles:[];var addonId=odData.addonId||'';var hostedByOD=true;{js}</script>",
                 css = css,
                 body = body_content,
-                od_data = od_data_json,
+                veil_data = veil_data_json,
                 js = js_src,
             );
         } else {
@@ -509,7 +541,7 @@ impl OpenDesktopApp {
     }
 
     /// Build the odData JSON payload that addon options.js scripts expect.
-    fn build_addon_od_data(&self, addon_name: &str, addon_dir: &std::path::Path) -> serde_json::Value {
+    fn build_addon_veil_data(&self, addon_name: &str, addon_dir: &std::path::Path) -> serde_json::Value {
         // Read addon.json
         let addon_json: serde_json::Value = std::fs::read_to_string(addon_dir.join("addon.json"))
             .ok()
@@ -533,8 +565,8 @@ impl OpenDesktopApp {
             .unwrap_or_default();
 
         // Build wallpaper-specific data if applicable
-        let od_home = od_home_dir().unwrap_or_default();
-        let wallpaper_assets_dir = od_home.join("Assets").join("wallpaper");
+        let veil_home = veil_home_dir().unwrap_or_default();
+        let wallpaper_assets_dir = veil_home.join("Assets").join("wallpaper");
         let mut assets: Vec<serde_json::Value> = Vec::new();
         if wallpaper_assets_dir.exists() {
             if let Ok(entries) = std::fs::read_dir(&wallpaper_assets_dir) {
@@ -664,15 +696,15 @@ impl OpenDesktopApp {
     // Open folder
     // -----------------------------------------------------------------------
 
-    fn ipc_open_od_folder(&mut self, subfolder: &str) {
-        let od_home = match od_home_dir() {
+    fn ipc_open_veil_folder(&mut self, subfolder: &str) {
+        let veil_home = match veil_home_dir() {
             Some(d) => d,
             None => return,
         };
         let dir = if subfolder.is_empty() {
-            od_home
+            veil_home
         } else {
-            od_home.join(subfolder)
+            veil_home.join(subfolder)
         };
         if dir.exists() {
             #[cfg(target_os = "windows")]
@@ -914,11 +946,11 @@ impl OpenDesktopApp {
     }
 
     fn push_config_data(&mut self) {
-        let od_home = match od_home_dir() {
+        let veil_home = match veil_home_dir() {
             Some(d) => d,
             None => return,
         };
-        let config_path = od_home.join("config.yaml");
+        let config_path = veil_home.join("config.yaml");
         let yaml_text = match std::fs::read_to_string(&config_path) {
             Ok(t) => t,
             Err(_) => return,
@@ -1044,7 +1076,7 @@ impl OpenDesktopApp {
             let vw = ctx.size.0 as f32 / scale;
             let vh = ctx.size.1 as f32 / scale;
 
-            let events = self.host.tick(vw, vh, dt, &mut renderer.font_system);
+            let events = self.host.tick(vw, vh, dt, &mut renderer.font_system, scale);
             (vw, vh, scale, ctx.size.0, ctx.size.1, events)
         };
 
@@ -1055,6 +1087,10 @@ impl OpenDesktopApp {
                     if self.host.active_page() != Some(&page_id) {
                         self.host.navigate_to(&page_id);
                         self.host.init_js_for_active_page(ctx_w, ctx_h);
+                        // Re-push the addon list so the sidebar component on the
+                        // newly compiled page is populated.
+                        let payload = extensions::build_sidebar_payload(&self.discovered_addons);
+                        self.host.execute_js(&payload);
                     }
                     match page_id.as_str() {
                         "home" => {
@@ -1337,11 +1373,11 @@ impl OpenDesktopApp {
 }
 
 // ---------------------------------------------------------------------------
-// OD home directory helper
+// VEIL home directory helper
 // ---------------------------------------------------------------------------
 
-fn od_home_dir() -> Option<std::path::PathBuf> {
-    dirs_next::home_dir().map(|h| h.join("ProjectOpen").join("OpenDesktop"))
+fn veil_home_dir() -> Option<std::path::PathBuf> {
+    dirs_next::home_dir().map(|h| h.join("ProjectOpen").join("VEIL"))
 }
 
 /// Extract the inner HTML of <body>…</body> or return the whole string if no body tag.
@@ -1369,20 +1405,20 @@ fn capitalize(s: &str) -> String {
 // winit ApplicationHandler
 // ---------------------------------------------------------------------------
 
-impl ApplicationHandler for OpenDesktopApp {
+impl ApplicationHandler for VEILApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
 
-        log::info!("Initialising OpenDesktop window...");
+        log::info!("Initialising VEIL window...");
 
         let (icon_rgba, icon_w, icon_h) = load_declared_icon(&self.host, "window")
             .unwrap_or_else(|| generate_default_icon());
         let window_icon = winit::window::Icon::from_rgba(icon_rgba, icon_w, icon_h).ok();
 
         let attrs = WindowAttributes::default()
-            .with_title("OpenDesktop")
+            .with_title("VEIL")
             .with_inner_size(PhysicalSize::new(1280u32, 800u32))
             .with_decorations(!self.host.has_custom_title_bar)
             .with_visible(false) // Start hidden — tray double-click shows window
@@ -1426,7 +1462,7 @@ impl ApplicationHandler for OpenDesktopApp {
             .unwrap_or_else(|| generate_default_icon());
         self.host.init_tray_with_config(TrayConfig {
             enabled: true,
-            tooltip: "OpenDesktop".to_string(),
+            tooltip: "VEIL".to_string(),
             icon_rgba: Some((tray_rgba, tray_w, tray_h)),
             ..TrayConfig::default()
         });
@@ -1437,6 +1473,11 @@ impl ApplicationHandler for OpenDesktopApp {
         // Initialize JS runtime for the active page.
         let (w, h) = self.gpu_ctx.as_ref().map(|c| c.size).unwrap_or((1280, 800));
         self.host.init_js_for_active_page(w, h);
+
+        // Push the discovered-addon list to the front-end so the sidebar can
+        // render the Addons dropdown.
+        let payload = extensions::build_sidebar_payload(&self.discovered_addons);
+        self.host.execute_js(&payload);
 
         // Populate DevTools GPU info.
         if let Some(ref ctx) = self.gpu_ctx {

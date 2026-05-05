@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/autostart.rs
+// ~/veil/veil-backend/src/autostart.rs
 //
 // Tray settings persistence (autostart flags, run-at-startup) and
 // user-config directory bootstrapping — extracted from the old systemtray module
@@ -28,7 +28,7 @@ pub struct TraySettings {
 pub fn tray_settings_path() -> Option<PathBuf> {
     std::env::var("USERPROFILE")
         .ok()
-        .map(|home| Path::new(&home).join("ProjectOpen").join("OpenDesktop").join("tray_settings.json"))
+        .map(|home| Path::new(&home).join("ProjectOpen").join("VEIL").join("tray_settings.json"))
 }
 
 pub fn load_tray_settings() -> TraySettings {
@@ -86,7 +86,7 @@ pub fn save_tray_settings(settings: &TraySettings) {
 // Run at startup (Windows registry)
 // ---------------------------------------------------------------------------
 
-const STARTUP_REGISTRY_NAME: &str = "OpenDesktopBackend";
+const STARTUP_REGISTRY_NAME: &str = "VEILBackend";
 
 #[cfg(target_os = "windows")]
 pub fn is_backend_startup_enabled() -> Result<bool, String> {
@@ -198,7 +198,7 @@ pub fn start_configured_autostart_addons() {
 
 pub fn ensure_user_config_dirs() {
     if let Ok(home) = std::env::var("USERPROFILE") {
-        let root = Path::new(&home).join("ProjectOpen").join("OpenDesktop");
+        let root = Path::new(&home).join("ProjectOpen").join("VEIL");
         for p in [
             root.join("Assets"),
             root.join("Assets/Addons"),

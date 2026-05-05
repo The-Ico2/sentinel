@@ -14,8 +14,8 @@
 //   mod installer;
 //
 //   fn main() {
-//       let config = installer::InstallerConfig::core("OpenDesktop")
-//           .exe_name("od-core.exe")
+//       let config = installer::InstallerConfig::core("VEIL")
+//           .exe_name("veil-core.exe")
 //           .subdirs(&["Addons", "Assets", "logs"]);
 //       installer::bootstrap(&config, log_fn);
 //       // ... rest of your app
@@ -28,8 +28,8 @@
 //   mod installer;
 //
 //   fn main() {
-//       let config = installer::InstallerConfig::addon("OpenDesktop", "wallpaper")
-//           .exe_name("od-wallpaper.exe")
+//       let config = installer::InstallerConfig::addon("VEIL", "wallpaper")
+//           .exe_name("veil-wallpaper.exe")
 //           .addon_subdirs(&["options"]);
 //       installer::bootstrap(&config, log_fn);
 //       // ... rest of your addon
@@ -57,14 +57,14 @@ pub enum ComponentKind {
 /// All fields have sensible defaults — only `app_name` is required.
 #[derive(Clone, Debug)]
 pub struct InstallerConfig {
-    /// The ProjectOpen application name (e.g. "OpenDesktop", "OpenPeripheral").
+    /// The ProjectOpen application name (e.g. "VEIL", "OpenPeripheral").
     /// Determines the root directory: `~/ProjectOpen/<app_name>/`.
     pub app_name: String,
 
     /// What kind of component this binary is.
     pub kind: ComponentKind,
 
-    /// The filename to install the exe as (e.g. "od-core.exe").
+    /// The filename to install the exe as (e.g. "veil-core.exe").
     /// Defaults to the current exe's filename.
     pub exe_name: Option<String>,
 

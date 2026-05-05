@@ -1,25 +1,31 @@
-<div class="page-content">
-  <div class="page">
-    <div class="page-header">
-      <span class="page-header-label">Diagnostics</span>
-      <div class="page-header-row">
-        <h1>Live Data</h1>
-        <div class="actions-bar">
-          <button class="btn-secondary active" id="filter-all" data-action="ipc" data-ns="data" data-cmd="filter" data-args='{"filter":"all"}'>All</button>
-          <button class="btn-secondary" id="filter-hardware" data-action="ipc" data-ns="data" data-cmd="filter" data-args='{"filter":"hardware"}'>Hardware</button>
-          <button class="btn-secondary" id="filter-network" data-action="ipc" data-ns="data" data-cmd="filter" data-args='{"filter":"network"}'>Network</button>
-          <button class="btn-secondary" id="filter-system" data-action="ipc" data-ns="data" data-cmd="filter" data-args='{"filter":"system"}'>System</button>
-        </div>
-      </div>
-      <p class="subtitle">Real-time system data from the OpenDesktop registry</p>
+<div class="veil-page">
+    <div class="veil-page__header">
+        <div class="veil-page__eyebrow">Live data</div>
+        <h1 class="veil-page__title">System data</h1>
+        <p class="veil-page__subtitle">Real-time telemetry collected by VEIL. Addons consume these channels via the IPC bridge.</p>
     </div>
 
-    <div class="data-panels" id="data-panels">
-      <div class="empty-state">
-        <div class="empty-state-icon">D</div>
-        <p>Connecting to backend...</p>
-        <p class="hint">Live data will appear once the OpenDesktop daemon is running</p>
-      </div>
+    <div class="veil-flex veil-gap-2 veil-mb-5">
+        <input class="veil-input" placeholder="Filter channels…" id="veil-data-filter" style="max-width: 320px;">
+        <button class="veil-btn veil-btn--ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Reload
+        </button>
     </div>
-  </div>
+
+    <div class="veil-card">
+        <table class="veil-table">
+            <thead>
+                <tr>
+                    <th>Channel</th>
+                    <th>Latest</th>
+                    <th>Rate</th>
+                    <th>Last update</th>
+                </tr>
+            </thead>
+            <tbody data-veil-channels>
+                <tr><td colspan="4" style="color: var(--veil-text-tertiary); padding: var(--veil-space-5); text-align: center;">Awaiting data…</td></tr>
+            </tbody>
+        </table>
+    </div>
 </div>

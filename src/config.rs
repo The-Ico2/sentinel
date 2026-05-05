@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/config.rs
+// ~/veil/veil-backend/src/config.rs
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,7 +9,7 @@ use std::{
     },
 };
 use crate::{info, warn, error};
-use crate::paths::od_root_dir;
+use crate::paths::veil_root_dir;
 
 /// Backend configuration persisted in config.yaml next to the executable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ pub struct BackendConfig {
     #[serde(default = "default_false")]
     pub refresh_on_request: bool,
 
-    /// Whether an open OpenDesktop UI should force active data updates via heartbeat.
+    /// Whether an open VEIL UI should force active data updates via heartbeat.
     #[serde(default = "default_true")]
     pub ui_data_exception_enabled: bool,
 
@@ -121,7 +121,7 @@ fn global_config() -> &'static RwLock<BackendConfig> {
 }
 
 fn config_path() -> PathBuf {
-    od_root_dir().join("config.yaml")
+    veil_root_dir().join("config.yaml")
 }
 
 /// Load config.yaml from disk (or create defaults). Call once at startup.

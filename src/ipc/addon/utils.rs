@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/addon/utils.rs
+// ~/veil/veil-backend/src/ipc/addon/utils.rs
 
 use std::path::PathBuf;
 use crate::Addon;

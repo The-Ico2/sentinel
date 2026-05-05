@@ -1,9 +1,9 @@
 [package]
-name = "OpenDesktop"
+name = "VEIL"
 version = "0.2.2"
 edition = "2021"
 authors = ["Ico2"]
-description = "OpenDesktop Backend/CLI"
+description = "VEIL Backend/CLI"
 license = "UNLICENSED"
 
 [dependencies]
@@ -75,7 +75,7 @@ wry = "0.52"
 urlencoding = "2.1"
 
 # OpenRender UI
-openrender-runtime = { path = "../../OpenRender" }
+prism-runtime = { path = "../../PRISM" }
 winit = { version = "0.30.13", features = ["rwh_06"] }
 pollster = "0.4.0"
 wgpu = "28.0.0"

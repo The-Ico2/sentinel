@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/data_updater.rs
+// ~/veil/veil-backend/src/ipc/data_updater.rs
 //
 // Event-driven registry updater.  Each tier sleeps on a Condvar so it
 // wakes *instantly* when tracking demands change, instead of waiting

@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/appdata/trayicons.rs
+// ~/veil/veil-backend/src/ipc/appdata/trayicons.rs
 // Enumerates system tray (notification area) icons including hidden overflow area.
 // Returns app name, tooltip, process ID, visibility, and exe path for each icon.
 

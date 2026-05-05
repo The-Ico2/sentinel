@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/appdata/window.rs
+// ~/veil/veil-backend/src/ipc/appdata/window.rs
 
 use serde::Serialize;
 use std::{

@@ -13,7 +13,7 @@
 //   ```rust
 //   mod logging;
 //   // ...
-//   logging::init("OpenDesktop", "Core", cfg!(debug_assertions));
+//   logging::init("VEIL", "Core", cfg!(debug_assertions));
 //   info!("Hello from Core");
 //   ```
 
@@ -51,7 +51,7 @@ static LOGGER: ProjectOpenLogger = ProjectOpenLogger;
 
 /// Initialise the logger.
 ///
-/// - `app_name`: application name (e.g. "OpenDesktop", "OpenPeripheral").
+/// - `app_name`: application name (e.g. "VEIL", "OpenPeripheral").
 /// - `segment`: component name (e.g. "Core", "Wallpaper", "Server").
 /// - `debug`: if true, captures Debug-level and above; otherwise Warn and above.
 ///

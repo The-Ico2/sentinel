@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/sysdata/idle.rs
+// ~/veil/veil-backend/src/ipc/sysdata/idle.rs
 
 use serde_json::{json, Value};
 use std::mem;

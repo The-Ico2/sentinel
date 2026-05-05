@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/main.rs
+// ~/veil/veil-backend/src/main.rs
 
 #![windows_subsystem = "windows"]
 
@@ -99,11 +99,11 @@ impl ODDaemon {
         // Auto-launch the OpenRender UI process (owns the system tray).
         // The UI starts hidden — the tray icon appears immediately and the
         // user can double-click it to show the window.
-        info!("Launching OpenDesktop UI process (tray host)");
+        info!("Launching VEIL UI process (tray host)");
         match std::env::current_exe() {
             Ok(exe) => {
                 match std::process::Command::new(&exe)
-                    .arg("--od-ui")
+                    .arg("--veil-ui")
                     .spawn()
                 {
                     Ok(child) => info!("UI process started (PID {})", child.id()),
@@ -123,7 +123,7 @@ impl ODDaemon {
 }
 
 fn acquire_single_instance() -> Option<HANDLE> {
-    let mut name: Vec<u16> = "Global\\OpenDesktopBackendSingleton"
+    let mut name: Vec<u16> = "Global\\VEILBackendSingleton"
         .encode_utf16()
         .collect();
     name.push(0);
@@ -150,13 +150,17 @@ fn main() {
     }
 
     // Run self-install/bootstrap before singleton acquisition so a relaunch
-    // from ~/ProjectOpen/OpenDesktop/OpenDesktop.exe is not blocked by this process mutex.
+    // from ~/ProjectOpen/VEIL/VEIL.exe is not blocked by this process mutex.
     bootstrap_user_root();
 
     let args: Vec<String> = std::env::args().collect();
     let is_ui_mode = args
         .iter()
-        .any(|a| a == "--addon-config-ui" || a == "--od-ui" || a == "--addon-webview");
+        .any(|a| a == "--addon-config-ui" || a == "--veil-ui" || a == "--addon-webview");
+
+    // Enable logging before the singleton check so a silent exit is observable.
+    logging::init("VEIL", "Core", true);
+    info!("VEIL backend starting (args={:?})", &args[1..]);
 
     let instance_guard = if is_ui_mode {
         None
@@ -164,14 +168,11 @@ fn main() {
         match acquire_single_instance() {
             Some(handle) => Some(handle),
             None => {
+                info!("Another VEIL backend instance already holds the singleton mutex — exiting.");
                 return;
             }
         }
     };
-
-    // Enable logging at startup
-    logging::init("OpenDesktop", "Core", true);
-    info!("OpenDesktop backend starting");
 
     if std::env::args().count() > 1 {
         info!("CLI mode detected");
@@ -189,7 +190,7 @@ fn main() {
     let daemon = ODDaemon::new();
     daemon.run();
 
-    info!("OpenDesktop backend exiting");
+    info!("VEIL backend exiting");
 
     if let Some(handle) = instance_guard {
         unsafe {

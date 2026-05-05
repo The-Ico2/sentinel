@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/dispatch/sysdatad.rs
+// ~/veil/veil-backend/src/ipc/dispatch/sysdatad.rs
 
 use serde_json::Value;
 use crate::ipc::sysdata::display::MonitorManager;

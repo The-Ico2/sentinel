@@ -1,41 +1,38 @@
-<div class="page-content">
-  <!-- ═══ List View (addon cards) ═══ -->
-  <div class="page" id="addon-list-view">
-    <div class="page-header">
-      <span class="page-header-label">Installed</span>
-      <div class="page-header-row">
-        <h1>Addons</h1>
-        <div class="actions-bar">
-          <button class="btn-secondary" data-action="ipc" data-ns="addons" data-cmd="refresh">Refresh</button>
-          <button class="btn-secondary" data-action="ipc" data-ns="addons" data-cmd="open-folder">Open Folder</button>
+<div class="veil-page">
+    <div class="veil-page__header">
+        <div class="veil-page__eyebrow">Addons</div>
+        <h1 class="veil-page__title">Installed addons</h1>
+        <p class="veil-page__subtitle">Each addon ships its own dashboard, settings, and editor pages. Click an addon below or use the sidebar to drill in.</p>
+    </div>
+
+    <div class="veil-flex veil-gap-2 veil-mb-5">
+        <button class="veil-btn veil-btn--violet" data-action="addons.refresh">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Refresh
+        </button>
+        <button class="veil-btn veil-btn--ghost" data-action="open-folder" data-folder="Addons">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+            Open folder
+        </button>
+    </div>
+
+    <div class="veil-list" id="veil-addon-list">
+        <!-- Populated at runtime by VEIL backend over IPC.
+             Each row format:
+             <div class="veil-list__row" data-navigate="<addon_id>.home">
+                 <span class="veil-list__icon">…svg…</span>
+                 <div>
+                     <p class="veil-list__title">Status Bar</p>
+                     <p class="veil-list__sub">veil.statusbar · v0.4.0</p>
+                 </div>
+                 <span class="veil-list__meta">Running</span>
+             </div> -->
+        <div class="veil-empty" data-veil-empty>
+            <span class="veil-empty__mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><path d="M17.5 14v3.5M17.5 17.5H21M17.5 17.5V21M17.5 17.5H14"/></svg>
+            </span>
+            <p>No addons installed.</p>
+            <p class="veil-empty__hint">Drop an addon executable into the Addons folder to install it. Addons register themselves on first run.</p>
         </div>
-      </div>
-      <p class="subtitle">Manage installed addon packages and their configuration</p>
     </div>
-
-    <div class="addon-count-row">
-      <span class="addon-count-label"><span id="addon-count">0</span> addon(s) installed</span>
-    </div>
-
-    <div class="addon-grid" id="addon-grid">
-      <div class="empty-state">
-        <div class="empty-state-icon">A</div>
-        <p>No addons detected</p>
-        <p class="hint">Addons are discovered from ~/ProjectOpen/OpenDesktop/Addons/</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ Detail View (addon options, hidden by default) ═══ -->
-  <div class="page" id="addon-detail-view" style="display:none;">
-    <div class="addon-detail-header">
-      <button class="btn-secondary addon-back-btn" id="addon-back-btn" data-action="ipc" data-ns="addons" data-cmd="back">← Back</button>
-      <div class="addon-detail-title">
-        <h1 id="addon-detail-name">Addon</h1>
-        <div class="addon-detail-actions" id="addon-detail-actions"></div>
-      </div>
-    </div>
-    <div class="addon-tab-bar" id="addon-tab-bar"></div>
-    <div class="addon-tab-content" id="addon-tab-content"></div>
-  </div>
 </div>

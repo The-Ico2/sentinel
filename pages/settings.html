@@ -1,100 +1,52 @@
-<div class="page-content">
-  <div class="page">
-    <div class="page-header">
-      <span class="page-header-label">Configuration</span>
-      <h1>Settings</h1>
-      <p class="subtitle">Backend and UI preferences</p>
+<div class="veil-page">
+    <div class="veil-page__header">
+        <div class="veil-page__eyebrow">Settings</div>
+        <h1 class="veil-page__title">Settings</h1>
+        <p class="veil-page__subtitle">Configure how VEIL launches, behaves, and themes itself.</p>
     </div>
 
-    <div class="settings-group">
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <h2>Data Pipeline</h2>
-          <p class="settings-section-desc">Control how the backend collects system data</p>
+    <section class="veil-card veil-mb-5">
+        <h3 class="veil-card__title">Startup</h3>
+        <p class="veil-card__body">Run the VEIL backend automatically when you sign in to Windows.</p>
+        <div class="veil-flex veil-gap-3 veil-mt-4">
+            <span class="veil-switch" data-id="autostart"></span>
+            <div>
+                <p class="veil-list__title">Run at startup</p>
+                <p class="veil-list__sub">Backend is launched headlessly; the UI window stays hidden until you open it.</p>
+            </div>
         </div>
+    </section>
 
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-label">Fast Pull Rate (ms)</span>
-            <span class="setting-description">Interval for high-priority data sources</span>
-          </div>
-          <input type="number" class="setting-input" id="setting-fast-rate" value="50" min="10" max="5000" step="10"
-            data-action="ipc" data-ns="settings" data-cmd="set-fast-rate" />
+    <section class="veil-card veil-mb-5">
+        <h3 class="veil-card__title">Theme</h3>
+        <p class="veil-card__body">VEIL ships with a dark glass theme inspired by Mica, Liquid Glass, and Arch.</p>
+        <div class="veil-flex veil-gap-3 veil-mt-4">
+            <button class="veil-btn veil-btn--violet">Veil Dark <span class="veil-tag veil-tag--violet" style="margin-left: 8px;">Active</span></button>
+            <button class="veil-btn veil-btn--ghost">Veil Light</button>
+            <button class="veil-btn veil-btn--ghost">High Contrast</button>
         </div>
+    </section>
 
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-label">Slow Pull Rate (ms)</span>
-            <span class="setting-description">Interval for low-priority data sources</span>
-          </div>
-          <input type="number" class="setting-input" id="setting-slow-rate" value="500" min="100" max="30000" step="50"
-            data-action="ipc" data-ns="settings" data-cmd="set-slow-rate" />
+    <section class="veil-card veil-mb-5">
+        <h3 class="veil-card__title">Data pull rates</h3>
+        <p class="veil-card__body">How often VEIL polls system data. Lower numbers mean more responsive widgets but slightly higher CPU use.</p>
+        <div class="veil-grid veil-gap-3 veil-mt-4" style="grid-template-columns: 1fr 1fr;">
+            <label>
+                <span class="veil-caption veil-mb-3" style="display: block;">Fast pull (ms)</span>
+                <input class="veil-input" value="500">
+            </label>
+            <label>
+                <span class="veil-caption veil-mb-3" style="display: block;">Slow pull (ms)</span>
+                <input class="veil-input" value="2000">
+            </label>
         </div>
+    </section>
 
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-label">Pause Data Pulling</span>
-            <span class="setting-description">Temporarily stop all data collection</span>
-          </div>
-          <button class="btn-secondary" id="setting-pause-btn"
-            data-action="ipc" data-ns="settings" data-cmd="toggle-pause">Resume</button>
+    <section class="veil-card veil-card--blood veil-mb-5">
+        <h3 class="veil-card__title">Reset</h3>
+        <p class="veil-card__body">Clear cached registry data and restart the backend. Your installed addons stay put.</p>
+        <div class="veil-mt-4">
+            <button class="veil-btn veil-btn--blood">Reset VEIL</button>
         </div>
-
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-label">Refresh on Request</span>
-            <span class="setting-description">Force a fresh data pull when an addon requests it</span>
-          </div>
-          <button class="btn-secondary" id="setting-refresh-btn"
-            data-action="ipc" data-ns="settings" data-cmd="toggle-refresh">Enabled</button>
-        </div>
-      </div>
-
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <h2>Directories</h2>
-          <p class="settings-section-desc">Installation and data paths</p>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-label">OpenDesktop Home</span>
-            <span class="setting-description path-label" id="od-home-path">~/ProjectOpen/OpenDesktop</span>
-          </div>
-          <button class="btn-secondary" data-action="ipc" data-ns="app" data-cmd="open-folder">Browse</button>
-        </div>
-      </div>
-
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <h2>About</h2>
-        </div>
-
-        <div class="about-section">
-          <div class="about-row">
-            <span class="about-label">Version</span>
-            <span class="about-value" id="od-version">0.2.2</span>
-          </div>
-          <div class="about-row">
-            <span class="about-label">Renderer</span>
-            <span class="about-value">OpenRender</span>
-          </div>
-          <p class="about-tagline">Open-source desktop customization platform</p>
-        </div>
-      </div>
-    </div>
-  </div>
+    </section>
 </div>
-
-<script>
-function __odOnConfigPush(cfg) {
-  var fr = document.getElementById('setting-fast-rate');
-  if (fr && cfg.fast_pull_rate_ms != null) fr.value = cfg.fast_pull_rate_ms;
-  var sr = document.getElementById('setting-slow-rate');
-  if (sr && cfg.slow_pull_rate_ms != null) sr.value = cfg.slow_pull_rate_ms;
-  var pb = document.getElementById('setting-pause-btn');
-  if (pb) pb.textContent = cfg.data_pull_paused ? 'Resume' : 'Pause';
-  var rb = document.getElementById('setting-refresh-btn');
-  if (rb) rb.textContent = cfg.refresh_on_request ? 'Enabled' : 'Disabled';
-}
-</script>

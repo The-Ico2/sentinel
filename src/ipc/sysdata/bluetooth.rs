@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/sysdata/bluetooth.rs
+// ~/veil/veil-backend/src/ipc/sysdata/bluetooth.rs
 
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;

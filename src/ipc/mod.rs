@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/mod.rs
+// ~/veil/veil-backend/src/ipc/mod.rs
 
 pub mod server;
 pub mod request;

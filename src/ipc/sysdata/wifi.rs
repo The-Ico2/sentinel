@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/sysdata/wifi.rs
+// ~/veil/veil-backend/src/ipc/sysdata/wifi.rs
 
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;

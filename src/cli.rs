@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/cli.rs
+// ~/veil/veil-backend/src/cli.rs
 // Responsible for managing CLI commands and adding commands from Addons
 
 use clap::{ArgAction, Parser, ValueEnum};
@@ -26,7 +26,7 @@ struct FoundItem {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "OpenDesktop unified CLI")]
+#[command(author, version, about = "VEIL unified CLI")]
 struct Cli {
     #[arg(long = "app", action = ArgAction::SetTrue)]
     app_mode: bool,
@@ -139,7 +139,7 @@ fn resolve_content_dirs(cli: &Cli) -> Vec<PathBuf> {
         }
     }
     if let Some(home) = user_home_dir() {
-        let default_root = home.join("ProjectOpen").join("OpenDesktop");
+        let default_root = home.join("ProjectOpen").join("VEIL");
         info!("Adding default content-dir: {}", default_root.display());
         roots.push(default_root);
     }
@@ -186,8 +186,8 @@ pub fn bootstrap_user_root() {
     info!("=== Bootstrap starting ===");
     info!("Current exe: {:?}", std::env::current_exe());
 
-    let config = crate::installer::InstallerConfig::core("OpenDesktop")
-        .exe_name("OpenDesktop.exe")
+    let config = crate::installer::InstallerConfig::core("VEIL")
+        .exe_name("VEIL.exe")
         .subdirs(&["Addons", "Assets"]);
 
     fn log_fn(level: crate::installer::LogLevel, msg: &str) {
@@ -203,7 +203,7 @@ pub fn bootstrap_user_root() {
 
 fn route_to_addon_executable(first_arg: &str) -> Option<(PathBuf, Vec<String>)> {
     if let Some(home) = user_home_dir() {
-        let addons_root = home.join("ProjectOpen").join("OpenDesktop").join("Addons");
+        let addons_root = home.join("ProjectOpen").join("VEIL").join("Addons");
         if !addons_root.is_dir() { return None; }
 
         let mut candidates: Vec<(String, PathBuf)> = Vec::new();
@@ -270,8 +270,8 @@ pub fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     bootstrap_user_root();
 
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--od-ui") {
-        info!("Launching OpenDesktop UI (OpenRender)");
+    if args.iter().any(|a| a == "--veil-ui") {
+        info!("Launching VEIL UI (OpenRender)");
         crate::ui::launch()?;
         return Ok(());
     }

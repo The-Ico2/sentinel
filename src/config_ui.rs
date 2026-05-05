@@ -293,13 +293,13 @@ impl UiCaches {
 }
 
 pub fn run_addon_config_ui(addon_ref: &str) -> Result<(), Box<dyn std::error::Error>> {
-    run_od_ui(Some(addon_ref))
+    run_veil_ui(Some(addon_ref))
 }
 
-pub fn run_od_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_veil_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let addon_catalog = discover_addon_configs();
     if addon_catalog.is_empty() {
-        warn!("No addon config.yaml files were discovered for OpenDesktop UI");
+        warn!("No addon config.yaml files were discovered for VEIL UI");
     }
 
     for addon in &addon_catalog {
@@ -308,8 +308,8 @@ pub fn run_od_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::error::Er
 
     let custom_tab_addons = collect_custom_tab_shell_addons(&addon_catalog);
     if !custom_tab_addons.is_empty() {
-        info!("Launching OpenDesktop WebView shell for custom addon tabs");
-        return run_od_custom_tabs_shell(custom_tab_addons, addon_focus);
+        info!("Launching VEIL WebView shell for custom addon tabs");
+        return run_veil_custom_tabs_shell(custom_tab_addons, addon_focus);
     }
 
     let mut selected = 0usize;
@@ -352,13 +352,13 @@ pub fn run_od_ui(addon_focus: Option<&str>) -> Result<(), Box<dyn std::error::Er
         ..Default::default()
     };
 
-    eframe::run_native("OpenDesktop", options, Box::new(move |_cc| Ok(Box::new(app))))
-        .map_err(|e| format!("Failed to open OpenDesktop UI: {}", e))?;
+    eframe::run_native("VEIL", options, Box::new(move |_cc| Ok(Box::new(app))))
+        .map_err(|e| format!("Failed to open VEIL UI: {}", e))?;
 
     Ok(())
 }
 
-fn run_od_custom_tabs_shell(
+fn run_veil_custom_tabs_shell(
         addons: Vec<CustomTabShellAddon>,
         addon_focus: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -380,47 +380,47 @@ fn run_od_custom_tabs_shell(
                 })
                 .unwrap_or_else(|| addons[0].id.clone());
 
-        let html = build_od_custom_tabs_shell_html(&addons, &selected_addon_id)?;
-        let shell_path = od_shell_html_path()?;
+        let html = build_veil_custom_tabs_shell_html(&addons, &selected_addon_id)?;
+        let shell_path = veil_shell_html_path()?;
         if let Some(parent) = shell_path.parent() {
                 std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&shell_path, html)?;
 
-        // Use od:// custom protocol so shell + iframes are same-origin.
+        // Use veil:// custom protocol so shell + iframes are same-origin.
         // This is critical: WebView2's WebMessageReceived only fires for
         // top-level frame messages, and file:// iframes silently drop
         // window.parent.postMessage due to opaque-origin restrictions.
-        // With od:// → http://od.localhost, both frames share
+        // With veil:// → http://veil.localhost, both frames share
         // the same origin, so the iframe can directly call
         // window.parent.__odBridgePost() to relay to Rust.
-        let od_home = od_home_dir()?;
-        let shell_url = file_path_to_od_url(&shell_path, &od_home)?;
-        info!("[ui] Launching OpenDesktop custom-tab shell at {}", shell_url);
+        let veil_home = veil_home_dir()?;
+        let shell_url = file_path_to_veil_url(&shell_path, &veil_home)?;
+        info!("[ui] Launching VEIL custom-tab shell at {}", shell_url);
 
         let event_loop = EventLoopBuilder::new().build();
         let window = WindowBuilder::new()
-                .with_title("OpenDesktop")
+                .with_title("VEIL")
                 .build(&event_loop)
-                .map_err(|e| format!("Failed to create OpenDesktop shell window: {}", e))?;
+                .map_err(|e| format!("Failed to create VEIL shell window: {}", e))?;
 
-        let protocol_root = od_home.clone();
+        let protocol_root = veil_home.clone();
         let ui_view_mode = Arc::new(Mutex::new("addon".to_string()));
         let ui_view_mode_ipc = Arc::clone(&ui_view_mode);
         let ui_renderer_mode = Arc::new(Mutex::new("webview2".to_string()));
         let ui_renderer_mode_ipc = Arc::clone(&ui_renderer_mode);
 
         let webview = WebViewBuilder::new()
-                .with_custom_protocol("opendesktop".to_string(), move |_webview_id, request| {
+                .with_custom_protocol("veil".to_string(), move |_webview_id, request| {
                     let uri = request.uri().to_string();
-                    // Extract path from od://localhost/path or http://od.localhost/path
+                    // Extract path from veil://localhost/path or http://veil.localhost/path
                     let raw_path = uri
-                        .strip_prefix("od://localhost")
-                        .or_else(|| uri.strip_prefix("od://"))
+                        .strip_prefix("veil://localhost")
+                        .or_else(|| uri.strip_prefix("veil://"))
                         .or_else(|| {
-                            // WebView2 workaround: http://od.localhost/path
-                            uri.strip_prefix("http://od.localhost")
-                                .or_else(|| uri.strip_prefix("https://od.localhost"))
+                            // WebView2 workaround: http://veil.localhost/path
+                            uri.strip_prefix("http://veil.localhost")
+                                .or_else(|| uri.strip_prefix("https://veil.localhost"))
                         })
                         .unwrap_or(&uri);
                     let path_part = raw_path.split('?').next().unwrap_or("");
@@ -450,7 +450,7 @@ fn run_od_custom_tabs_shell(
                 .with_url(&shell_url)
                 .with_initialization_script(
                     // This runs in ALL frames (main + iframes) on WebView2.
-                    // Because we serve everything through od:// custom
+                    // Because we serve everything through veil:// custom
                     // protocol, the shell and iframes are same-origin.
                     // Iframes can directly call window.parent.__odBridgePost()
                     // to relay messages to Rust via the top-level frame's
@@ -510,7 +510,7 @@ fn run_od_custom_tabs_shell(
                         let addon_id = message
                             .addon_id
                             .clone()
-                            .unwrap_or_else(|| "od.addon.wallpaper".to_string());
+                            .unwrap_or_else(|| "veil.addon.wallpaper".to_string());
 
                         match message.kind.to_lowercase().as_str() {
                             "wallpaper_apply_assignment" => {
@@ -683,7 +683,7 @@ fn run_od_custom_tabs_shell(
                     }
                 })
                 .build(&window)
-                .map_err(|e| format!("Failed to create OpenDesktop shell webview: {}", e))?;
+                .map_err(|e| format!("Failed to create VEIL shell webview: {}", e))?;
 
         let mut last_monitor_poll = std::time::Instant::now();
         let mut cached_monitor_json = String::new();
@@ -692,7 +692,7 @@ fn run_od_custom_tabs_shell(
         let mut last_registry_push = std::time::Instant::now();
         let mut last_config_push = std::time::Instant::now();
         let mut last_ui_heartbeat = std::time::Instant::now();
-        let snapshot_home = od_home.clone();
+        let snapshot_home = veil_home.clone();
 
         event_loop.run(move |event, _, control_flow| {
                 const UI_POLL_MS_ACTIVE_DATA_WEBVIEW: u64 = 80;
@@ -842,25 +842,25 @@ fn run_od_custom_tabs_shell(
         });
 }
 
-fn od_home_dir() -> Result<PathBuf, String> {
+fn veil_home_dir() -> Result<PathBuf, String> {
         let home = std::env::var("USERPROFILE").map_err(|_| "USERPROFILE not set".to_string())?;
-        Ok(Path::new(&home).join("ProjectOpen").join("OpenDesktop"))
+        Ok(Path::new(&home).join("ProjectOpen").join("VEIL"))
 }
 
-fn od_shell_html_path() -> Result<PathBuf, String> {
-        Ok(od_home_dir()?
+fn veil_shell_html_path() -> Result<PathBuf, String> {
+        Ok(veil_home_dir()?
                 .join("cache")
-                .join("od_custom_tabs_shell.html"))
+                .join("veil_custom_tabs_shell.html"))
 }
 
-/// Convert a filesystem path under ProjectOpen/OpenDesktop to a od:// custom protocol URL.
-/// E.g. `C:\Users\Xande\ProjectOpen\OpenDesktop\Addons\wallpaper\options\library.html`
-///    → `od://localhost/Addons/wallpaper/options/library.html`
-fn file_path_to_od_url(path: &Path, od_home: &Path) -> Result<String, String> {
+/// Convert a filesystem path under ProjectOpen/VEIL to a veil:// custom protocol URL.
+/// E.g. `C:\Users\Xande\ProjectOpen\VEIL\Addons\wallpaper\options\library.html`
+///    → `veil://localhost/Addons/wallpaper/options/library.html`
+fn file_path_to_veil_url(path: &Path, veil_home: &Path) -> Result<String, String> {
         let canonical = std::fs::canonicalize(path)
                 .map_err(|e| format!("Failed to resolve path '{}': {}", path.display(), e))?;
-        let home_canonical = std::fs::canonicalize(od_home)
-                .map_err(|e| format!("Failed to resolve home '{}': {}", od_home.display(), e))?;
+        let home_canonical = std::fs::canonicalize(veil_home)
+                .map_err(|e| format!("Failed to resolve home '{}': {}", veil_home.display(), e))?;
 
         let mut canon_str = canonical.to_string_lossy().to_string();
         let mut home_str = home_canonical.to_string_lossy().to_string();
@@ -874,14 +874,14 @@ fn file_path_to_od_url(path: &Path, od_home: &Path) -> Result<String, String> {
 
         let relative = canon_str
                 .strip_prefix(&home_str)
-                .ok_or_else(|| format!("Path '{}' is not under opendesktop home '{}'", canon_str, home_str))?
+                .ok_or_else(|| format!("Path '{}' is not under veil home '{}'", canon_str, home_str))?
                 .trim_start_matches('\\');
 
         let url_path = relative.replace('\\', "/").replace(' ', "%20");
-        // WebView2 rewrites od://localhost/ to http://od.localhost/
+        // WebView2 rewrites veil://localhost/ to http://veil.localhost/
         // internally. URLs embedded in page content (iframe src, img src, etc.)
         // must use the rewritten http:// form to be navigable within the page.
-        Ok(format!("http://od.localhost/{}", url_path))
+        Ok(format!("http://veil.localhost/{}", url_path))
 }
 
 fn guess_mime_type(path: &Path) -> &'static str {
@@ -913,7 +913,7 @@ fn guess_mime_type(path: &Path) -> &'static str {
 }
 
 fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellAddon> {
-        let od_home = match od_home_dir() {
+        let veil_home = match veil_home_dir() {
                 Ok(h) => h,
                 Err(_) => return Vec::new(),
         };
@@ -924,13 +924,13 @@ fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellA
                         continue;
                 }
 
-        let wallpaper_payload = build_wallpaper_shell_data(addon, &od_home);
+        let wallpaper_payload = build_wallpaper_shell_data(addon, &veil_home);
 
                 let shell_tabs: Vec<CustomTabShellPage> = tabs
                         .into_iter()
                         .filter_map(|t| {
-                file_path_to_od_url(&t.path, &od_home).ok().map(|base_url| {
-                    let url = append_od_data_query(&base_url, &addon.id, wallpaper_payload.as_ref());
+                file_path_to_veil_url(&t.path, &veil_home).ok().map(|base_url| {
+                    let url = append_veil_data_query(&base_url, &addon.id, wallpaper_payload.as_ref());
                     CustomTabShellPage {
                                         id: t.id,
                                         title: t.title,
@@ -959,7 +959,7 @@ fn collect_custom_tab_shell_addons(catalog: &[AddonMeta]) -> Vec<CustomTabShellA
         out
 }
 
-fn append_od_data_query(
+fn append_veil_data_query(
     base_url: &str,
     addon_id: &str,
     wallpaper: Option<&WallpaperShellData>,
@@ -974,7 +974,7 @@ fn append_od_data_query(
     format!("{}{}odData={}", base_url, sep, encoded)
 }
 
-fn build_wallpaper_shell_data(addon: &AddonMeta, od_home: &Path) -> Option<WallpaperShellData> {
+fn build_wallpaper_shell_data(addon: &AddonMeta, veil_home: &Path) -> Option<WallpaperShellData> {
     let is_wallpaper = addon.package.eq_ignore_ascii_case("wallpaper")
         || addon.id.to_lowercase().contains("wallpaper")
         || addon.name.to_lowercase().contains("wallpaper");
@@ -1026,13 +1026,13 @@ fn build_wallpaper_shell_data(addon: &AddonMeta, od_home: &Path) -> Option<Wallp
             let preview_url = asset
                 .preview_paths
                 .first()
-                .and_then(|p| file_path_to_od_url(p, od_home).ok());
+                .and_then(|p| file_path_to_veil_url(p, veil_home).ok());
 
             // Resolve the wallpaper's index.html URL
             let manifest_dir = asset.manifest_path.parent().unwrap_or(Path::new(""));
             let index_path = manifest_dir.join("index.html");
             let html_url = if index_path.exists() {
-                file_path_to_od_url(&index_path, od_home).ok()
+                file_path_to_veil_url(&index_path, veil_home).ok()
             } else {
                 None
             };
@@ -1784,7 +1784,7 @@ fn capture_wallpaper_preview(manifest_path_str: &str) -> Result<(), String> {
     }
 
     // Use wry's print_to_pdf-like approach or an offscreen capture.
-    // For now we mark that a new preview is needed by writing a opendesktop timestamp
+    // For now we mark that a new preview is needed by writing a veil timestamp
     // so the wallpaper addon's watcher knows to regenerate.
     let marker_path = preview_dir.join(".preview_capture_pending");
     let timestamp = std::time::SystemTime::now()
@@ -1798,7 +1798,7 @@ fn capture_wallpaper_preview(manifest_path_str: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn build_od_custom_tabs_shell_html(
+fn build_veil_custom_tabs_shell_html(
         addons: &[CustomTabShellAddon],
         selected_addon_id: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -1812,7 +1812,7 @@ fn build_od_custom_tabs_shell_html(
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenDesktop</title>
+    <title>VEIL</title>
     <style>
         :root {{
             --bg-base: #0a0a0f;
@@ -2748,10 +2748,10 @@ fn build_od_custom_tabs_shell_html(
         const DEFAULT_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>';
 
         const STORE_ADDONS = [
-            {{ id: 'od-windowmanager', name: 'Window Manager', owner: 'The-Ico2', repo: 'od-windowmanager' }},
-            {{ id: 'od-wallpaper', name: 'Wallpaper', owner: 'The-Ico2', repo: 'od-wallpaper' }},
-            {{ id: 'od-statusbar', name: 'Status Bar', owner: 'The-Ico2', repo: 'od-statusbar' }},
-            {{ id: 'opendesktop', name: 'OpenDesktop Core', owner: 'The-Ico2', repo: 'OpenDesktop' }}
+            {{ id: 'veil-windowmanager', name: 'Window Manager', owner: 'The-Ico2', repo: 'veil-windowmanager' }},
+            {{ id: 'veil-wallpaper', name: 'Wallpaper', owner: 'The-Ico2', repo: 'veil-wallpaper' }},
+            {{ id: 'veil-statusbar', name: 'Status Bar', owner: 'The-Ico2', repo: 'veil-statusbar' }},
+            {{ id: 'veil', name: 'VEIL Core', owner: 'The-Ico2', repo: 'VEIL' }}
         ];
 
         function escapeHtml(value) {{
@@ -2799,7 +2799,7 @@ fn build_od_custom_tabs_shell_html(
         function stripODPrefix(value) {{
             return String(value == null ? '' : value)
                 .toLowerCase()
-                .replace(/^opendesktop[-_.]?/i, '');
+                .replace(/^veil[-_.]?/i, '');
         }}
 
         function addonTokensFromStore(addon) {{
@@ -2877,7 +2877,7 @@ fn build_od_custom_tabs_shell_html(
                 try {{ data = JSON.parse(data); }} catch (_) {{ return; }}
             }}
 
-            if (data && data.opendesktopBridge && data.payload) {{
+            if (data && data.veilBridge && data.payload) {{
                 window.__odBridgePost(data.payload);
                 return;
             }}
@@ -3061,7 +3061,7 @@ fn build_od_custom_tabs_shell_html(
         async function renderStorePage() {{
             const header = document.getElementById('page-header');
             const content = document.getElementById('page-content');
-            header.innerHTML = '<h2>Addon Store</h2><p style="color:var(--text-dim);margin:4px 0 0;">Download OpenDesktop addons from GitHub releases</p>';
+            header.innerHTML = '<h2>Addon Store</h2><p style="color:var(--text-dim);margin:4px 0 0;">Download VEIL addons from GitHub releases</p>';
 
             const token = Date.now() + ':' + Math.random().toString(36).slice(2);
             window.__storeRenderToken = token;
@@ -3128,7 +3128,7 @@ fn build_od_custom_tabs_shell_html(
             header.innerHTML = '<h2>Updater</h2><p style="color:var(--text-dim);margin:4px 0 0;">Compare installed versions with latest GitHub releases</p>';
 
             const targets = STORE_ADDONS.map(function(addon) {{
-                const current = addon.id === 'opendesktop'
+                const current = addon.id === 'veil'
                     ? BACKEND_CURRENT_VERSION
                     : resolveInstalledVersionForStoreAddon(addon);
                 return {{ addon: addon, current: current }};
@@ -3229,10 +3229,10 @@ fn build_od_custom_tabs_shell_html(
             content.innerHTML =
                 '<div class="page-settings-group" style="padding:12px 14px;margin-bottom:12px;">' +
                     '<div class="setting-row" style="padding:4px 0;border-bottom:none;">' +
-                        '<span class="s-label">OpenDesktop UI Data Exception</span>' +
+                        '<span class="s-label">VEIL UI Data Exception</span>' +
                         '<label class="s-toggle"><input type="checkbox" id="cfg-ui-data-exception"' + (uiDataExceptionEnabled ? ' checked' : '') + '><span class="s-slider"></span></label>' +
                     '</div>' +
-                    '<p style="color:var(--text-dim);font-size:12px;margin:4px 0 0;">When enabled, opening OpenDesktop UI keeps all data updates active via UI heartbeat.</p>' +
+                    '<p style="color:var(--text-dim);font-size:12px;margin:4px 0 0;">When enabled, opening VEIL UI keeps all data updates active via UI heartbeat.</p>' +
                 '</div>' +
                 '<div class="data-filter">' +
                     chips.map(function(c) {{ return '<button class="data-filter-chip' + (c === window.__dataActiveChip ? ' active' : '') + '">' + c + '</button>'; }}).join('') +
@@ -3614,21 +3614,21 @@ fn build_od_custom_tabs_shell_html(
         function buildAudioPanel(d) {{
             if (!d || d === null) return '';
             var body = '';
-            var od = d.output_device || {{}};
+            var veil = d.output_device || {{}};
             var id = d.input_device || {{}};
             // Output device
-            if (od.volume_percent != null) {{
-                body += pctBar(od.volume_percent, 'Output Volume');
+            if (veil.volume_percent != null) {{
+                body += pctBar(veil.volume_percent, 'Output Volume');
             }}
-            body += dataRow('Output Muted', od.muted != null ? (od.muted ? '<span class="data-tag offline">Yes</span>' : '<span class="data-tag online">No</span>') : '\u2014');
-            if (od.name) body += dataRow('Output Device', od.name);
-            if (od.audio_level != null) body += dataRow('Audio Level', (od.audio_level * 100).toFixed(1) + '%');
-            var lvl = od.levels || {{}};
+            body += dataRow('Output Muted', veil.muted != null ? (veil.muted ? '<span class="data-tag offline">Yes</span>' : '<span class="data-tag online">No</span>') : '\u2014');
+            if (veil.name) body += dataRow('Output Device', veil.name);
+            if (veil.audio_level != null) body += dataRow('Audio Level', (veil.audio_level * 100).toFixed(1) + '%');
+            var lvl = veil.levels || {{}};
             if (lvl.peak != null) body += dataRow('Peak', (lvl.peak * 100).toFixed(1) + '% (' + (lvl.peak_db != null ? lvl.peak_db.toFixed(1) : '?') + ' dB)');
             if (lvl.rms != null) body += dataRow('RMS', (lvl.rms * 100).toFixed(1) + '% (' + (lvl.rms_db != null ? lvl.rms_db.toFixed(1) : '?') + ' dB)');
             if (lvl.smoothed_peak != null) body += dataRow('Smoothed Peak', (lvl.smoothed_peak * 100).toFixed(1) + '% (' + (lvl.smoothed_peak_db != null ? lvl.smoothed_peak_db.toFixed(1) : '?') + ' dB)');
             if (lvl.smoothed_rms != null) body += dataRow('Smoothed RMS', (lvl.smoothed_rms * 100).toFixed(1) + '% (' + (lvl.smoothed_rms_db != null ? lvl.smoothed_rms_db.toFixed(1) : '?') + ' dB)');
-            var hist = od.history || {{}};
+            var hist = veil.history || {{}};
             if (hist.sample_count != null) body += dataRow('Peak Samples', hist.sample_count);
             if (hist.peak_32 && hist.peak_32.length > 0) {{
                 var maxPk = Math.max.apply(null, hist.peak_32);
@@ -4250,7 +4250,7 @@ fn build_od_custom_tabs_shell_html(
         window.__odPushMonitors = function(monitors) {{
             var frame = document.getElementById('tabFrame');
             if (frame && frame.contentWindow) {{
-                frame.contentWindow.postMessage({{ type: '__od_monitors', monitors: monitors }}, '*');
+                frame.contentWindow.postMessage({{ type: '__veil_monitors', monitors: monitors }}, '*');
             }}
         }};
 
@@ -4381,7 +4381,7 @@ impl ODApp {
             .resizable(false)
             .default_width(220.0)
             .show(ctx, |ui| {
-                ui.heading("OpenDesktop");
+                ui.heading("VEIL");
                 ui.label(RichText::new("Native control center").color(Color32::GRAY));
                 ui.add_space(8.0);
                 ui.separator();
@@ -4440,7 +4440,7 @@ impl ODApp {
         }
 
         Self::section_card(ui, "Backend Settings", |ui| {
-            ui.label("Control the OpenDesktop backend data engine.");
+            ui.label("Control the VEIL backend data engine.");
             ui.add_space(10.0);
 
             // ── Fast-tier pull rate slider ──
@@ -4598,7 +4598,7 @@ impl ODApp {
     fn show_addons(&mut self, ui: &mut egui::Ui) {
         Self::section_card(ui, "Addon Hub", |ui| {
             if self.addon_catalog.is_empty() {
-                ui.label("No addons found in ~/ProjectOpen/OpenDesktop/Addons.");
+                ui.label("No addons found in ~/ProjectOpen/VEIL/Addons.");
                 return;
             }
 
@@ -5848,7 +5848,7 @@ pub fn run_standalone_webview(path: &str, title: Option<&str>) -> Result<(), Box
     }
 
     let url = file_path_to_url(&page_path)?;
-    let window_title = title.unwrap_or("OpenDesktop").to_string();
+    let window_title = title.unwrap_or("VEIL").to_string();
     info!(
         "[ui] Launching standalone addon webview: title='{}', page='{}'",
         window_title,
@@ -5859,12 +5859,12 @@ pub fn run_standalone_webview(path: &str, title: Option<&str>) -> Result<(), Box
     let window = WindowBuilder::new()
         .with_title(window_title)
         .build(&event_loop)
-        .map_err(|e| format!("Failed to create OpenDesktop addon webview window: {}", e))?;
+        .map_err(|e| format!("Failed to create VEIL addon webview window: {}", e))?;
 
     let webview = WebViewBuilder::new()
         .with_url(&url)
         .build(&window)
-        .map_err(|e| format!("Failed to create OpenDesktop addon webview: {}", e))?;
+        .map_err(|e| format!("Failed to create VEIL addon webview: {}", e))?;
 
     event_loop.run(move |event, _, control_flow| {
         let _keep_alive = &webview;
@@ -5879,13 +5879,13 @@ pub fn run_standalone_webview(path: &str, title: Option<&str>) -> Result<(), Box
     });
 }
 
-fn open_in_od_webview(path: &Path, title: String) -> Result<(), String> {
+fn open_in_veil_webview(path: &Path, title: String) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Tab page not found: {}", path.display()));
     }
 
     let exe = std::env::current_exe()
-        .map_err(|e| format!("Failed to resolve OpenDesktop executable: {}", e))?;
+        .map_err(|e| format!("Failed to resolve VEIL executable: {}", e))?;
 
     info!(
         "[ui] Spawning addon webview process: title='{}', page='{}'",
@@ -5899,7 +5899,7 @@ fn open_in_od_webview(path: &Path, title: String) -> Result<(), String> {
         .arg("--addon-webview-title")
         .arg(title)
         .spawn()
-        .map_err(|e| format!("Failed to spawn OpenDesktop webview process: {}", e))?;
+        .map_err(|e| format!("Failed to spawn VEIL webview process: {}", e))?;
 
     Ok(())
 }
@@ -6028,11 +6028,11 @@ fn render_selected_custom_tab(
     let tab = tabs.iter().find(|t| t.id == selected_id).unwrap_or(&tabs[0]);
     let tab_key = format!("{}:{}", meta.id, tab.id);
     if last_opened.as_ref() != Some(&tab_key) {
-        let title = format!("OpenDesktop • {} • {}", meta.name, tab.title);
-        match open_in_od_webview(&tab.path, title) {
+        let title = format!("VEIL • {} • {}", meta.name, tab.title);
+        match open_in_veil_webview(&tab.path, title) {
             Ok(_) => {
                 *last_opened = Some(tab_key);
-                *global_status = format!("Opened {} in OpenDesktop WebView", tab.title);
+                *global_status = format!("Opened {} in VEIL WebView", tab.title);
             }
             Err(e) => {
                 *global_status = e;
@@ -6043,7 +6043,7 @@ fn render_selected_custom_tab(
     ui.label(RichText::new(format!("Addon-designed {} page", tab.title)).strong());
     ui.label(RichText::new(tab.path.display().to_string()).small().color(Color32::GRAY));
     ui.add_space(6.0);
-    ui.label(RichText::new("This tab is rendered by the addon HTML in a OpenDesktop WebView window.").small().color(Color32::LIGHT_BLUE));
+    ui.label(RichText::new("This tab is rendered by the addon HTML in a VEIL WebView window.").small().color(Color32::LIGHT_BLUE));
     if ui.button("Reopen tab page").clicked() {
         *last_opened = None;
     }
@@ -6142,7 +6142,7 @@ fn discover_addon_configs() -> Vec<AddonMeta> {
         Err(_) => return result,
     };
 
-    let addons_root = PathBuf::from(home).join("ProjectOpen").join("OpenDesktop").join("Addons");
+    let addons_root = PathBuf::from(home).join("ProjectOpen").join("VEIL").join("Addons");
     let entries = match std::fs::read_dir(&addons_root) {
         Ok(v) => v,
         Err(_) => return result,
@@ -6261,7 +6261,7 @@ fn discover_assets_for_category(category: &str) -> Vec<AssetOption> {
         Err(_) => return result,
     };
 
-    let assets_root = PathBuf::from(home).join("ProjectOpen").join("OpenDesktop").join("Assets");
+    let assets_root = PathBuf::from(home).join("ProjectOpen").join("VEIL").join("Assets");
     let category_root = match find_category_dir_case_insensitive(&assets_root, category) {
         Some(p) => p,
         None => return result,

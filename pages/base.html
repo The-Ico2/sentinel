@@ -3,18 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenDesktop</title>
+    <title>VEIL</title>
+    <link rel="shortcut icon" href="icons/icon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="assets/css/VeilFramework.css">
 </head>
 <body>
-    <include type="icon" src="icon.ico" />
-    <include type="asset" src="css/universal.css" />
-    <include type="asset" src="css/OpenFramework.css" />
-    <div class="app-layout">
-        <include type="component" src="sidebar.html" />
-        <page-content default="home" />
+    <div class="veil-app">
+        <div class="veil-shell">
+            <include type="component" src="sidebar.html" />
+
+            <main class="veil-content">
+                <page-content default="home" />
+            </main>
+        </div>
     </div>
-    <div class="toast-container" id="toast-container"></div>
-    <include type="asset" src="js/OpenFramework.js" />
-    <include type="asset" src="js/script.js" />
+
+    <div class="veil-toast-container" id="toast-container"></div>
+
+    <script src="assets/js/VeilFramework.js"></script>
+    <script src="assets/js/script.js"></script>
 </body>
 </html>

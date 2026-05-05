@@ -1,15 +1,15 @@
-// ~/opendesktop/od-backend/src/ipc/dispatch/controld.rs
+// ~/veil/veil-backend/src/ipc/dispatch/controld.rs
 //
 // "control" IPC namespace — host-side utilities exposed to JS wallpapers.
 //
 // Commands:
 //   write_log  { name: "<filename>", content: "<text>" }
-//              Writes/overwrites a file inside ~/ProjectOpen/OpenDesktop/logs/.
+//              Writes/overwrites a file inside ~/ProjectOpen/VEIL/logs/.
 //              Only simple filenames are accepted (no path separators, no "..").
 
 use serde_json::{json, Value};
 use std::fs;
-use crate::paths::od_root_dir;
+use crate::paths::veil_root_dir;
 
 pub fn dispatch_control(cmd: &str, args: Option<Value>) -> Result<Value, String> {
     match cmd {
@@ -29,7 +29,7 @@ pub fn dispatch_control(cmd: &str, args: Option<Value>) -> Result<Value, String>
                 return Err(format!("Invalid log filename: {:?}", name));
             }
 
-            let log_dir = od_root_dir().join("logs");
+            let log_dir = veil_root_dir().join("logs");
             fs::create_dir_all(&log_dir)
                 .map_err(|e| format!("Could not create logs dir: {}", e))?;
 

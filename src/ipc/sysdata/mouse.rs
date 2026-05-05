@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/sysdata/mouse.rs
+// ~/veil/veil-backend/src/ipc/sysdata/mouse.rs
 
 use serde_json::{json, Value};
 use std::sync::{OnceLock, RwLock};

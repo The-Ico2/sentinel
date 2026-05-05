@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/appdata/notifications.rs
+// ~/veil/veil-backend/src/ipc/appdata/notifications.rs
 // Retrieves recent Windows notification history via PowerShell / WinRT toast notification APIs
 
 use serde_json::{json, Value};

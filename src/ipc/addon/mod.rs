@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/ipc/addon/mod.rs
+// ~/veil/veil-backend/src/ipc/addon/mod.rs
 
 pub mod utils;
 pub mod start;

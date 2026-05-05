@@ -1,4 +1,4 @@
-// ~/opendesktop/od-backend/src/utils.rs
+// ~/veil/veil-backend/src/utils.rs
 
 use windows::{
     core::Result,
