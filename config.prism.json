@@ -1,0 +1,33 @@
+{
+  "title": "VEIL",
+  "capabilities": [
+    "tray",
+    "network",
+    "singleinstance"
+  ],
+  "pages": {
+    "landing": "base.html"
+  },
+  "window": {
+    "width": 1280,
+    "height": 800
+  },
+  "logging": {
+    "level": "debug",
+    "file": "~/logs/"
+  },
+  "install": {
+    "location": "C:/Program Files/VEIL",
+    "create_shortcut": true,
+    "run_at_startup": true
+  },
+  "theme": "Dark",
+  "context_menu": {
+    "hide_defaults": [],
+    "items": [
+      { "separator": true, "label": "-" },
+      { "label": "Go to Landing", "action": "navigate:landing", "shortcut": "Ctrl+H" },
+      { "label": "Print DOM", "action": "js:console.log(document.body.outerHTML)" }
+    ]
+  }
+}

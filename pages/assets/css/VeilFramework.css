@@ -142,7 +142,6 @@
   --veil-sidebar-w:        240px;
   --veil-sidebar-w-rail:   60px;
   --veil-titlebar-h:       40px;
-  --veil-content-max:      1280px;
 }
 
 /* ── Reset ─────────────────────────────────────────────────────────── */
@@ -151,7 +150,7 @@
 html, body {
   margin: 0;
   padding: 0;
-  width: 100%;
+  width: 100vw;
   height: 100%;
   background: var(--veil-bg-deep);
   color: var(--veil-text-primary);
@@ -552,12 +551,25 @@ p  { margin: 0 0 var(--veil-space-3); color: var(--veil-text-secondary); }
   background: linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.01) 100%);
 }
 
+/* <page-content> is the route-swap container that lives inside .veil-content.
+   It must fill the remaining vertical space and allow its child page to
+   scroll, otherwise overflowing pages get clipped instead of scrolling. */
+page-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+}
+
 .veil-page, .prism-page {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: var(--veil-space-7) var(--veil-space-8);
-  max-width: var(--veil-content-max);
   width: 100%;
   margin: 0 auto;
 }

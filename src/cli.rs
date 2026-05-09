@@ -271,8 +271,8 @@ pub fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--veil-ui") {
-        info!("Launching VEIL UI (OpenRender)");
-        crate::ui::launch()?;
+        info!("Launching VEIL UI (PRISM)");
+        crate::launch_ui()?;
         return Ok(());
     }
 

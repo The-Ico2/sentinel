@@ -81,6 +81,7 @@ pollster = "0.4.0"
 wgpu = "28.0.0"
 glyphon = "0.10.0"
 log = "0.4"
+include_dir = "0.7"
 
 [build-dependencies]
 winresource = "0.1"

@@ -10,7 +10,6 @@ mod autostart;
 mod utils;
 mod config_ui;
 mod config;
-mod ui;
 pub mod installer;
 
 use crate::{
@@ -22,6 +21,8 @@ use crate::{
     },
 };
 
+use include_dir::{include_dir, Dir};
+
 use std::path::PathBuf;
 use std::time::Duration;
 use windows::{
@@ -32,6 +33,23 @@ use windows::{
         UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
     },
 };
+
+// Embed all UI assets (HTML/CSS/JS/icons) into the executable so VEIL ships
+// as a single binary. Pages live in `Core/pages/`.
+static PAGES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/pages");
+
+/// Launch the PRISM-managed UI window using the embedded `config.prism.json`
+/// (developer-locked) plus the runtime-overridable `config.default.json`.
+/// All UI behaviour (routes, sidebar, capabilities, theme, tray, etc.) is
+/// driven by those JSON files — there is no Rust-side UI code.
+pub fn launch_ui() -> Result<(), Box<dyn std::error::Error>> {
+    let app = prism_runtime::EmbeddedApp {
+        prism_config_json: include_str!("../config.prism.json"),
+        default_config_json: Some(include_str!("../config.default.json")),
+        pages: &PAGES,
+    };
+    prism_runtime::run(app).map_err(|e| Box::<dyn std::error::Error>::from(format!("{e:?}")))
+}
 
 #[derive(Clone)]
 pub struct Addon { 
@@ -165,9 +183,17 @@ fn main() {
     // services would conflict with another running instance.
     let no_backend = args.iter().any(|a| a == "--no-backend" || a == "--ui-only");
 
-    // Enable logging before the singleton check so a silent exit is observable.
-    logging::init("VEIL", "Core", true);
-    info!("VEIL backend starting (args={:?})", &args[1..]);
+    // Modes that hand off control to PRISM (which owns the global `log`
+    // logger) must NOT initialise VEIL's own logger — `log::set_logger`
+    // succeeds only once per process and PRISM's init expects to win.
+    let prism_owns_logging = no_backend
+        || args.iter().any(|a| a == "--veil-ui" || a == "--addon-webview");
+
+    if !prism_owns_logging {
+        // Enable logging before the singleton check so a silent exit is observable.
+        logging::init("VEIL", "Core", true);
+        info!("VEIL backend starting (args={:?})", &args[1..]);
+    }
 
     let instance_guard = if is_ui_mode {
         None
@@ -183,7 +209,7 @@ fn main() {
 
     if no_backend && !is_ui_mode {
         info!("--no-backend flag detected: launching UI directly without backend services");
-        if let Err(e) = crate::ui::launch() {
+        if let Err(e) = launch_ui() {
             error!("UI launch failed: {e}");
         }
         if let Some(handle) = instance_guard {
