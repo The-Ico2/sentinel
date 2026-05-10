@@ -6,12 +6,11 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
-use crate::{info, warn, error};
+use crate::{info, warn};
 
 // ---------------------------------------------------------------------------
 // Tray settings
@@ -56,110 +55,14 @@ pub fn load_tray_settings() -> TraySettings {
     }
 }
 
-pub fn save_tray_settings(settings: &TraySettings) {
-    let Some(path) = tray_settings_path() else {
-        warn!("USERPROFILE not set; cannot save tray settings");
-        return;
-    };
-
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            error!("Failed to create tray settings directory '{}': {}", parent.display(), e);
-            return;
-        }
-    }
-
-    let content = match serde_json::to_string_pretty(settings) {
-        Ok(value) => value,
-        Err(e) => {
-            error!("Failed to serialize tray settings: {}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = std::fs::write(&path, content) {
-        error!("Failed to write tray settings '{}': {}", path.display(), e);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Run at startup (Windows registry)
 // ---------------------------------------------------------------------------
-
-const STARTUP_REGISTRY_NAME: &str = "VEILBackend";
-
-#[cfg(target_os = "windows")]
-pub fn is_backend_startup_enabled() -> Result<bool, String> {
-    let output = Command::new("reg")
-        .args([
-            "query",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-            "/v",
-            STARTUP_REGISTRY_NAME,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to query startup registry: {}", e))?;
-
-    Ok(output.status.success())
-}
 
 #[cfg(not(target_os = "windows"))]
 pub fn is_backend_startup_enabled() -> Result<bool, String> {
     Ok(false)
 }
-
-#[cfg(target_os = "windows")]
-pub fn set_backend_startup_enabled(enabled: bool) -> Result<(), String> {
-    if enabled {
-        let exe = std::env::current_exe()
-            .map_err(|e| format!("Failed to resolve backend executable: {}", e))?;
-        let exe_value = format!("\"{}\"", exe.display());
-
-        let output = Command::new("reg")
-            .args([
-                "add",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                "/v",
-                STARTUP_REGISTRY_NAME,
-                "/t",
-                "REG_SZ",
-                "/d",
-                &exe_value,
-                "/f",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to enable startup registry entry: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to enable startup registry entry: {}", stderr.trim()));
-        }
-
-        Ok(())
-    } else {
-        let output = Command::new("reg")
-            .args([
-                "delete",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                "/v",
-                STARTUP_REGISTRY_NAME,
-                "/f",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to disable startup registry entry: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let message = stderr.trim();
-            if !message.contains("unable to find") && !message.contains("Unable to find") {
-                return Err(format!("Failed to disable startup registry entry: {}", message));
-            }
-        }
-
-        Ok(())
-    }
-}
-
 #[cfg(not(target_os = "windows"))]
 pub fn set_backend_startup_enabled(_enabled: bool) -> Result<(), String> {
     Err("Run at startup toggle is only supported on Windows".to_string())

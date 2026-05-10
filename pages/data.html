@@ -5,12 +5,18 @@
         <p class="veil-page__subtitle">Real-time telemetry collected by VEIL. Addons consume these channels via the IPC bridge.</p>
     </div>
 
-    <div class="veil-flex veil-gap-2 veil-mb-5">
+    <div class="veil-flex veil-gap-2 veil-mb-5" style="align-items: center;">
         <input class="veil-input" placeholder="Filter channels…" id="veil-data-filter" style="max-width: 320px;">
-        <button class="veil-btn veil-btn--ghost">
+        <button class="veil-btn veil-btn--ghost" data-action="data.reload">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
             Reload
         </button>
+        <div class="veil-flex veil-gap-2" style="margin-left: auto; align-items: center;">
+            <span style="color: var(--veil-text-tertiary); font-size: var(--veil-fs-caption);">UI heartbeat</span>
+            <button class="veil-switch is-on" id="veil-ui-heartbeat-toggle" aria-label="Toggle UI heartbeat"></button>
+            <span class="veil-tag" id="veil-ui-heartbeat-state">ON</span>
+            <span style="color: var(--veil-text-tertiary); font-size: var(--veil-fs-caption);" id="veil-ui-heartbeat-last-seen">never</span>
+        </div>
     </div>
 
     <div class="veil-card">

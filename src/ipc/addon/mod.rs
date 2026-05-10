@@ -7,5 +7,4 @@ pub mod reload;
 
 pub use start::start;
 pub use stop::stop;
-pub use stop::stop_all;
 pub use reload::reload;
