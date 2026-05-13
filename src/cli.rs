@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     io::{self},
 };
-use crate::paths::user_home_dir;
+use crate::paths::{user_home_dir, veil_root_dir};
 use crate::{info, warn, error};
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -138,8 +138,8 @@ fn resolve_content_dirs(cli: &Cli) -> Vec<PathBuf> {
             info!("Added CLI content-dir: {}", dir);
         }
     }
-    if let Some(home) = user_home_dir() {
-        let default_root = home.join("ProjectOpen").join("VEIL");
+    if user_home_dir().is_some() {
+        let default_root = veil_root_dir();
         info!("Adding default content-dir: {}", default_root.display());
         roots.push(default_root);
     }
@@ -202,8 +202,8 @@ pub fn bootstrap_user_root() {
 }
 
 fn route_to_addon_executable(first_arg: &str) -> Option<(PathBuf, Vec<String>)> {
-    if let Some(home) = user_home_dir() {
-        let addons_root = home.join("ProjectOpen").join("VEIL").join("Addons");
+    if user_home_dir().is_some() {
+        let addons_root = veil_root_dir().join("Addons");
         if !addons_root.is_dir() { return None; }
 
         let mut candidates: Vec<(String, PathBuf)> = Vec::new();

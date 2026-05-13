@@ -4,7 +4,7 @@
 //
 // Commands:
 //   write_log  { name: "<filename>", content: "<text>" }
-//              Writes/overwrites a file inside ~/ProjectOpen/VEIL/logs/.
+//              Writes/overwrites a file inside ~/VEIL/Core/logs/.
 //              Only simple filenames are accepted (no path separators, no "..").
 
 use serde_json::{json, Value};

@@ -14,6 +14,7 @@ use wry::WebViewBuilder;
 
 use crate::{error, info, warn};
 use crate::ipc::sysdata::display::{MonitorInfo, MonitorManager};
+use crate::paths::veil_root_dir;
 
 #[derive(Clone)]
 struct AddonMeta {
@@ -843,8 +844,7 @@ fn run_veil_custom_tabs_shell(
 }
 
 fn veil_home_dir() -> Result<PathBuf, String> {
-        let home = std::env::var("USERPROFILE").map_err(|_| "USERPROFILE not set".to_string())?;
-        Ok(Path::new(&home).join("ProjectOpen").join("VEIL"))
+    Ok(veil_root_dir())
 }
 
 fn veil_shell_html_path() -> Result<PathBuf, String> {
@@ -853,8 +853,8 @@ fn veil_shell_html_path() -> Result<PathBuf, String> {
                 .join("veil_custom_tabs_shell.html"))
 }
 
-/// Convert a filesystem path under ProjectOpen/VEIL to a veil:// custom protocol URL.
-/// E.g. `C:\Users\Xande\ProjectOpen\VEIL\Addons\wallpaper\options\library.html`
+/// Convert a filesystem path under VEIL/Core to a veil:// custom protocol URL.
+/// E.g. `C:\Users\Xande\VEIL\Core\Addons\wallpaper\options\library.html`
 ///    → `veil://localhost/Addons/wallpaper/options/library.html`
 fn file_path_to_veil_url(path: &Path, veil_home: &Path) -> Result<String, String> {
         let canonical = std::fs::canonicalize(path)
@@ -4598,7 +4598,7 @@ impl ODApp {
     fn show_addons(&mut self, ui: &mut egui::Ui) {
         Self::section_card(ui, "Addon Hub", |ui| {
             if self.addon_catalog.is_empty() {
-                ui.label("No addons found in ~/ProjectOpen/VEIL/Addons.");
+                ui.label("No addons found in ~/VEIL/Core/Addons.");
                 return;
             }
 
@@ -6137,12 +6137,7 @@ fn ensure_config_file_exists(path: &PathBuf) -> Result<(), Box<dyn std::error::E
 fn discover_addon_configs() -> Vec<AddonMeta> {
     let mut result = Vec::new();
 
-    let home = match std::env::var("USERPROFILE") {
-        Ok(v) => v,
-        Err(_) => return result,
-    };
-
-    let addons_root = PathBuf::from(home).join("ProjectOpen").join("VEIL").join("Addons");
+    let addons_root = veil_root_dir().join("Addons");
     let entries = match std::fs::read_dir(&addons_root) {
         Ok(v) => v,
         Err(_) => return result,
@@ -6256,12 +6251,7 @@ fn discover_assets_for_meta(meta: &AddonMeta, schema: Option<&AddonSchema>) -> V
 fn discover_assets_for_category(category: &str) -> Vec<AssetOption> {
     let mut result = Vec::new();
 
-    let home = match std::env::var("USERPROFILE") {
-        Ok(v) => v,
-        Err(_) => return result,
-    };
-
-    let assets_root = PathBuf::from(home).join("ProjectOpen").join("VEIL").join("Assets");
+    let assets_root = veil_root_dir().join("Assets");
     let category_root = match find_category_dir_case_insensitive(&assets_root, category) {
         Some(p) => p,
         None => return result,

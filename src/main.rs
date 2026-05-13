@@ -168,7 +168,7 @@ fn main() {
     }
 
     // Run self-install/bootstrap before singleton acquisition so a relaunch
-    // from ~/ProjectOpen/VEIL/VEIL.exe is not blocked by this process mutex.
+    // from ~/VEIL/Core/VEIL.exe is not blocked by this process mutex.
     bootstrap_user_root();
 
     let args: Vec<String> = std::env::args().collect();

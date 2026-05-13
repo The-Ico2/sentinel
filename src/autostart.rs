@@ -5,12 +5,13 @@
 // so it can be shared by the daemon and the OpenRender UI tray.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
 use crate::{info, warn};
+use crate::paths::veil_root_dir;
 
 // ---------------------------------------------------------------------------
 // Tray settings
@@ -25,9 +26,7 @@ pub struct TraySettings {
 }
 
 pub fn tray_settings_path() -> Option<PathBuf> {
-    std::env::var("USERPROFILE")
-        .ok()
-        .map(|home| Path::new(&home).join("ProjectOpen").join("VEIL").join("tray_settings.json"))
+    Some(veil_root_dir().join("tray_settings.json"))
 }
 
 pub fn load_tray_settings() -> TraySettings {
@@ -100,8 +99,8 @@ pub fn start_configured_autostart_addons() {
 // ---------------------------------------------------------------------------
 
 pub fn ensure_user_config_dirs() {
-    if let Ok(home) = std::env::var("USERPROFILE") {
-        let root = Path::new(&home).join("ProjectOpen").join("VEIL");
+    if std::env::var("USERPROFILE").is_ok() {
+        let root = veil_root_dir();
         for p in [
             root.join("Assets"),
             root.join("Assets/Addons"),

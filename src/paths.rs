@@ -28,13 +28,13 @@ pub fn user_home_dir() -> Option<PathBuf> {
     }
 }
 
-/// The canonical VEIL root is always `~/ProjectOpen/VEIL/`.
+/// The canonical VEIL root is always `~/VEIL/Core/`.
 /// All config, addons, and assets live here.
 /// Result is cached after the first successful resolution.
 pub fn veil_root_dir() -> PathBuf {
     CACHED_ROOT.get_or_init(|| {
         let root = if let Some(home) = user_home_dir() {
-            home.join("ProjectOpen").join("VEIL")
+            home.join("VEIL").join("Core")
         } else {
             warn!("Could not resolve home directory, falling back to exe parent");
             match std::env::current_exe() {

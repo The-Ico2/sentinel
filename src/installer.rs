@@ -178,9 +178,22 @@ pub fn user_home_dir() -> Option<PathBuf> {
     }
 }
 
-/// Resolve the canonical app root: `~/ProjectOpen/<app_name>/`.
+/// Resolve the canonical app root.
+///
+/// For VEIL:
+/// - Core root: `~/VEIL/Core/`
+/// - Addons root: `~/VEIL/Core/Addons/`
+///
+/// For non-VEIL apps we keep the legacy layout:
+/// - `~/ProjectOpen/<app_name>/`
 pub fn app_root(app_name: &str) -> Option<PathBuf> {
-    user_home_dir().map(|home| home.join("ProjectOpen").join(app_name))
+    user_home_dir().map(|home| {
+        if app_name.eq_ignore_ascii_case("VEIL") {
+            home.join("VEIL").join("Core")
+        } else {
+            home.join("ProjectOpen").join(app_name)
+        }
+    })
 }
 
 /// Resolve the install directory for a given config.
@@ -217,9 +230,15 @@ pub fn is_installed(config: &InstallerConfig) -> bool {
     }
 }
 
-/// Resolve the logs directory: `~/ProjectOpen/.Logs/<app_name>/`.
+/// Resolve the logs directory.
 pub fn logs_dir(app_name: &str) -> Option<PathBuf> {
-    user_home_dir().map(|home| home.join("ProjectOpen").join(".Logs").join(app_name))
+    user_home_dir().map(|home| {
+        if app_name.eq_ignore_ascii_case("VEIL") {
+            home.join("VEIL").join("Core").join("logs")
+        } else {
+            home.join("ProjectOpen").join(".Logs").join(app_name)
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
