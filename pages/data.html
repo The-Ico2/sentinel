@@ -12,26 +12,19 @@
             Reload
         </button>
         <div class="veil-flex veil-gap-2" style="margin-left: auto; align-items: center;">
-            <span style="color: var(--veil-text-tertiary); font-size: var(--veil-fs-caption);">UI heartbeat</span>
-            <button class="veil-switch is-on" id="veil-ui-heartbeat-toggle" aria-label="Toggle UI heartbeat"></button>
-            <span class="veil-tag" id="veil-ui-heartbeat-state">ON</span>
-            <span style="color: var(--veil-text-tertiary); font-size: var(--veil-fs-caption);" id="veil-ui-heartbeat-last-seen">never</span>
+            <div class="veil-heartbeat-pill is-on" id="veil-ui-heartbeat-indicator" data-tooltip="Click to toggle UI heartbeat">
+                <span class="veil-heartbeat-pill__dot" aria-hidden="true"></span>
+                <span class="veil-heartbeat-pill__label">UI heartbeat</span>
+                <span class="veil-heartbeat-pill__state" id="veil-ui-heartbeat-state">ON</span>
+                <span class="veil-heartbeat-pill__sep">·</span>
+                <span class="veil-heartbeat-pill__seen" id="veil-ui-heartbeat-last-seen">never</span>
+            </div>
         </div>
     </div>
 
     <div class="veil-card">
-        <table class="veil-table">
-            <thead>
-                <tr>
-                    <th>Channel</th>
-                    <th>Latest</th>
-                    <th>Rate</th>
-                    <th>Last update</th>
-                </tr>
-            </thead>
-            <tbody data-veil-channels>
-                <tr><td colspan="4" style="color: var(--veil-text-tertiary); padding: var(--veil-space-5); text-align: center;">Awaiting data…</td></tr>
-            </tbody>
-        </table>
+        <div class="veil-data-card-grid" data-veil-channels id="veil-data-grid">
+            <div data-veil-empty style="grid-column: 1 / -1; color: var(--veil-text-tertiary); padding: var(--veil-space-5); text-align: center;">Awaiting data…</div>
+        </div>
     </div>
 </div>

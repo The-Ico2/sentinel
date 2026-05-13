@@ -10,17 +10,19 @@
 <body>
     <div class="veil-app">
         <div class="veil-shell">
-            <include type="component" src="sidebar.html" />
-
             <main class="veil-content">
                 <page-content default="home" />
             </main>
         </div>
+
+        <!-- Free-floating navigation bar (replaces sidebar). -->
+        <include type="component" src="floating-nav.html" />
     </div>
 
     <div class="veil-toast-container" id="toast-container"></div>
 
     <script src="assets/js/VeilFramework.js"></script>
+    <script src="assets/js/floating-nav.js"></script>
     <script src="assets/js/script.js"></script>
 </body>
 </html>

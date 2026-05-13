@@ -35,10 +35,6 @@
         }
       } catch (e) { /* ignore */ }
       setActiveNavItem(routeId);
-      var pageContent = document.querySelector("page-content");
-      if (pageContent) {
-        pageContent.setAttribute("data-active-content", routeId);
-      }
     },
     /** Show a transient toast. */
     toast: function (msg, kind) {
@@ -211,18 +207,33 @@
 
   // ── Active nav state ────────────────────────────────────────────────────
   function setActiveNavItem(targetPage) {
-    var all = document.querySelectorAll(
-      ".veil-nav-item, .prism-nav-item, .nav-item, .quick-action-btn"
-    );
-    for (var i = 0; i < all.length; i++) {
-      all[i].classList.remove("active");
-      all[i].classList.remove("is-active");
+    // PRISM's selector engine does not support comma-separated selector
+    // lists in querySelectorAll — split and union the matches ourselves
+    // so every nav variant gets cleared on every navigation.
+    var navSelectors = [
+      ".veil-nav-item",
+      ".prism-nav-item",
+      ".nav-item",
+      ".quick-action-btn",
+      ".veil-foot-btn",
+      ".veil-fnav-btn"
+    ];
+    for (var s = 0; s < navSelectors.length; s++) {
+      var nodes = document.querySelectorAll(navSelectors[s]);
+      for (var i = 0; i < nodes.length; i++) {
+        nodes[i].classList.remove("active");
+        nodes[i].classList.remove("is-active");
+      }
     }
     if (!targetPage) return;
     var matches = document.querySelectorAll('[data-navigate="' + targetPage + '"]');
     for (var k = 0; k < matches.length; k++) {
       var el = matches[k];
-      if (el.classList.contains("veil-nav-item") || el.classList.contains("prism-nav-item")) {
+      if (
+        el.classList.contains("veil-nav-item") ||
+        el.classList.contains("prism-nav-item") ||
+        el.classList.contains("veil-fnav-btn")
+      ) {
         el.classList.add("is-active");
       } else {
         el.classList.add("active");
@@ -362,6 +373,153 @@
     var pc = document.querySelector("page-content");
     var def = pc ? (pc.getAttribute("data-active-content") || pc.getAttribute("default") || "home") : "home";
     setActiveNavItem(def);
+
+    initInputExtensions();
+  }
+
+  // ── Input extensions: onRightClick / onRightClickF + LMB hold ─────
+  // PRISM dispatches a `contextmenu` event on right-click. We walk the
+  // ancestor chain looking for two attributes:
+  //
+  //   onRightClick="expr"   — full override. Runs `expr` and prevents
+  //                            the built-in PRISM menu from showing.
+  //                            (The host suppresses its menu when this
+  //                            handler calls `preventDefault()`.)
+  //   onRightClickF="expr"  — additive. Runs `expr` (may be empty) and
+  //                            prevents the built-in menu on the first
+  //                            right-click; on a second right-click on
+  //                            the same element within 600ms we ask the
+  //                            host to open the built-in menu via
+  //                            `__or_requestPrismMenu(x, y)`.
+  //
+  // We also implement LMB hold timing globally:
+  //   - 1000ms hold → dispatch a synthetic `longclick` event so addon
+  //                    JS can react (the "developer function").
+  //   - 2000ms hold → ask the host to open the built-in PRISM menu.
+  //
+  // Scrollbars / active scroll suppression is intentionally skipped
+  // since PRISM does not currently expose native scrollbar regions.
+  function initInputExtensions() {
+    var lastRClick = { node: null, t: 0 };
+    var R_DOUBLE_MS = 600;
+
+    function findAttrAncestor(node, name) {
+      while (node && typeof node.getAttribute === "function") {
+        var v = node.getAttribute(name);
+        if (v !== null && v !== undefined) return { node: node, value: v };
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    function runExpr(expr, node, evt) {
+      var src = String(expr || "").trim();
+      if (!src) return;
+      try {
+        // Evaluate as a function body so handlers can use `event` and
+        // `this` (= the element that carries the attribute).
+        var fn = new Function("event", src);
+        fn.call(node, evt);
+      } catch (e) {
+        if (window.console) console.error("[VEIL] inline handler error:", e, "in", src);
+      }
+    }
+
+    document.addEventListener("contextmenu", function (evt) {
+      var target = evt.target;
+      var override   = findAttrAncestor(target, "onRightClick");
+      var additive   = findAttrAncestor(target, "onRightClickF");
+
+      if (override) {
+        evt.preventDefault();
+        runExpr(override.value, override.node, evt);
+        lastRClick = { node: null, t: 0 };
+        return;
+      }
+
+      if (additive) {
+        evt.preventDefault();
+        runExpr(additive.value, additive.node, evt);
+        var now = Date.now();
+        if (lastRClick.node === additive.node && (now - lastRClick.t) <= R_DOUBLE_MS) {
+          // Second click within window → open built-in PRISM menu.
+          if (typeof __or_requestPrismMenu === "function") {
+            __or_requestPrismMenu(evt.clientX || 0, evt.clientY || 0);
+          }
+          lastRClick = { node: null, t: 0 };
+        } else {
+          lastRClick = { node: additive.node, t: now };
+        }
+        return;
+      }
+
+      // No attribute on the chain — let the host show its built-in menu.
+      lastRClick = { node: null, t: 0 };
+    });
+
+    // ── LMB hold timing ───────────────────────────────────────────
+    var holdTimer1 = null;   // 1s — dispatch `longclick`
+    var holdTimer2 = null;   // 2s — request built-in PRISM menu
+    var holdTarget = null;
+    var holdPos = { x: 0, y: 0 };
+
+    function clearHold() {
+      if (holdTimer1) { clearTimeout(holdTimer1); holdTimer1 = null; }
+      if (holdTimer2) { clearTimeout(holdTimer2); holdTimer2 = null; }
+      holdTarget = null;
+    }
+
+    document.addEventListener("mousedown", function (evt) {
+      if (evt.button !== 0) return;
+      holdTarget = evt.target;
+      holdPos.x = evt.clientX || 0;
+      holdPos.y = evt.clientY || 0;
+
+      holdTimer1 = setTimeout(function () {
+        if (!holdTarget) return;
+        var ev2 = {
+          type: "longclick",
+          target: holdTarget,
+          currentTarget: holdTarget,
+          clientX: holdPos.x,
+          clientY: holdPos.y,
+          button: 0,
+          buttons: 1,
+          defaultPrevented: false,
+          stopPropagation: function () {},
+          preventDefault: function () { this.defaultPrevented = true; }
+        };
+        // Best-effort dispatch via PRISM's listener cache. Manually walk
+        // ancestors so handlers registered with addEventListener fire.
+        var n = holdTarget;
+        while (n) {
+          if (n._eventListeners && n._eventListeners.longclick) {
+            var fns = n._eventListeners.longclick.slice();
+            ev2.currentTarget = n;
+            for (var i = 0; i < fns.length; i++) {
+              try { fns[i].call(n, ev2); } catch (e) { console.error("longclick:", e); }
+            }
+          }
+          n = n.parentNode;
+        }
+      }, 1000);
+
+      holdTimer2 = setTimeout(function () {
+        if (typeof __or_requestPrismMenu === "function") {
+          __or_requestPrismMenu(holdPos.x, holdPos.y);
+        }
+      }, 2000);
+    });
+
+    document.addEventListener("mouseup",   clearHold);
+    document.addEventListener("mousemove", function (evt) {
+      // Cancel hold timers if the cursor strays too far from the press
+      // origin — treat that as a drag, not a hold.
+      if (!holdTarget) return;
+      var dx = (evt.clientX || 0) - holdPos.x;
+      var dy = (evt.clientY || 0) - holdPos.y;
+      if ((dx * dx + dy * dy) > 64) clearHold();
+    });
   }
 
   if (typeof addEventListener === "function") {

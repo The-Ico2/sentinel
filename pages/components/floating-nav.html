@@ -1,0 +1,94 @@
+<!--
+  Floating navigation bar.
+
+  - Free-floating, draggable inside the app window.
+  - Two orientations: horizontal | vertical (each with an "inverse" variant
+    that simply reverses the button order along the axis).
+  - Persists position + orientation + inverse flag in localStorage.
+  - The cog button opens a small popover for orientation / pinning /
+    snap-to-position presets (4 corners + 4 edges + center).
+-->
+<div class="veil-floating-nav is-horizontal" data-veil-floating-nav id="veil-floating-nav">
+
+    <!-- Drag handle -->
+    <button class="veil-fnav__handle" data-veil-fnav-handle data-tooltip="Drag to move" aria-label="Drag handle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="6"  r="1.2" fill="currentColor"/>
+            <circle cx="15" cy="6"  r="1.2" fill="currentColor"/>
+            <circle cx="9" cy="12" r="1.2" fill="currentColor"/>
+            <circle cx="15" cy="12" r="1.2" fill="currentColor"/>
+            <circle cx="9" cy="18" r="1.2" fill="currentColor"/>
+            <circle cx="15" cy="18" r="1.2" fill="currentColor"/>
+        </svg>
+    </button>
+
+    <div class="veil-fnav__buttons" data-veil-fnav-buttons>
+        <button class="veil-fnav-btn" data-tooltip="Home" data-navigate="home" aria-label="Home">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 11l9-8 9 8"/>
+                <path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10"/>
+                <path d="M9 21V14h6v7"/>
+            </svg>
+        </button>
+        <button class="veil-fnav-btn" data-tooltip="Data" data-navigate="data" aria-label="Data">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <ellipse cx="12" cy="5" rx="8" ry="3"/>
+                <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/>
+                <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>
+            </svg>
+        </button>
+        <button class="veil-fnav-btn" data-tooltip="Store" data-navigate="store" aria-label="Store">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7l1.5-3h15L21 7"/>
+                <path d="M3 7v12a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7"/>
+                <path d="M9 7v3a3 3 0 0 1-6 0V7M21 7v3a3 3 0 0 1-6 0V7M15 7v3a3 3 0 0 1-6 0V7"/>
+            </svg>
+        </button>
+        <button class="veil-fnav-btn" data-tooltip="Settings" data-navigate="settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.7l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.7-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.7.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.7 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.7.3h.1a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.7-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.7V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Cog: opens orientation / pin / snap menu -->
+    <button class="veil-fnav__cog" data-veil-fnav-cog data-tooltip="Bar options" aria-label="Bar options">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="2"/>
+            <circle cx="12" cy="5"  r="1.4" fill="currentColor"/>
+            <circle cx="12" cy="19" r="1.4" fill="currentColor"/>
+        </svg>
+    </button>
+
+    <!-- Popover menu (hidden until cog/right-click triggers it) -->
+    <div class="veil-fnav__menu" data-veil-fnav-menu hidden>
+        <div class="veil-fnav__menu-section">
+            <div class="veil-fnav__menu-label">Orientation</div>
+            <div class="veil-fnav__menu-row">
+                <button class="veil-fnav__menu-btn" data-veil-fnav-orient="horizontal">Horizontal</button>
+                <button class="veil-fnav__menu-btn" data-veil-fnav-orient="vertical">Vertical</button>
+            </div>
+            <div class="veil-fnav__menu-row">
+                <button class="veil-fnav__menu-btn" data-veil-fnav-inverse-toggle>Reverse order</button>
+            </div>
+        </div>
+        <div class="veil-fnav__menu-section">
+            <div class="veil-fnav__menu-label">Snap to</div>
+            <div class="veil-fnav__menu-grid">
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="tl" data-tooltip="Top-left">↖</button>
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="t"  data-tooltip="Top">↑</button>
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="tr" data-tooltip="Top-right">↗</button>
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="l"  data-tooltip="Left">←</button>
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="c"  data-tooltip="Center">●</button>
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="r"  data-tooltip="Right">→</button>
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="bl" data-tooltip="Bottom-left">↙</button>
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="b"  data-tooltip="Bottom">↓</button>
+                <button class="veil-fnav__menu-cell" data-veil-fnav-snap="br" data-tooltip="Bottom-right">↘</button>
+            </div>
+        </div>
+        <div class="veil-fnav__menu-section">
+            <button class="veil-fnav__menu-btn" data-veil-fnav-pin-toggle>Pin position</button>
+        </div>
+    </div>
+</div>
